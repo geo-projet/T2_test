@@ -1,6 +1,5 @@
 # User requested exclusions
 backend/data/
-backend/chroma_db/
 
 # Python
 __pycache__/
