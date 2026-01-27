@@ -61,9 +61,8 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceNode]
 
-@app.on_event("startup")
-async def startup_event():
-    get_index()
+# Startup event removed to prevent timeouts on Render Free Tier
+# The index will be loaded lazily on the first /chat request
 
 @app.get("/")
 def read_root():
