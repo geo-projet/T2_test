@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-dotenv
+llama-index
+llama-parse
+chromadb
+llama-index-vector-stores-chroma
+nest_asyncio
