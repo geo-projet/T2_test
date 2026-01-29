@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, FileText, Loader2, Image as ImageIcon, Table } from 'lucide-react';
+import { Send, Bot, FileText, Loader2, Image as ImageIcon, Table, Globe, Microscope } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import dynamic from 'next/dynamic';
 
@@ -23,6 +23,10 @@ interface Source {
   page_label: string;
   file_name: string;
   content_type: string;
+  source_type: 'internal' | 'external';
+  url?: string;
+  title?: string;
+  publication_info?: string;
 }
 
 interface Message {
@@ -39,6 +43,7 @@ export default function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [selectedPDF, setSelectedPDF] = useState<{ fileName: string; pageNumber: number } | null>(null);
+  const [searchMode, setSearchMode] = useState<'internal' | 'hybrid' | 'science'>('internal');
 
   // Debug: Log when selectedPDF changes
   useEffect(() => {
@@ -68,7 +73,7 @@ export default function ChatInterface() {
       const response = await fetch(`${apiUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: userMessage }),
+        body: JSON.stringify({ query: userMessage, mode: searchMode }),
       });
 
       if (!response.ok) throw new Error('Erreur réseau');
@@ -114,9 +119,42 @@ export default function ChatInterface() {
       <div className="flex h-screen bg-gray-50 p-4 justify-center items-center">
         <Card className="w-full max-w-4xl h-[90vh] flex flex-col shadow-xl">
         <CardHeader className="border-b bg-white rounded-t-xl">
-          <div className="flex items-center gap-2">
-            <Bot className="h-6 w-6 text-green-600" />
-            <CardTitle>Assistant RAG Environnemental</CardTitle>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Bot className="h-6 w-6 text-green-600" />
+              <CardTitle>Assistant RAG Environnemental</CardTitle>
+            </div>
+
+            {/* Sélecteur de mode */}
+            <div className="flex gap-2">
+              <Button
+                variant={searchMode === 'internal' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setSearchMode('internal')}
+                className={searchMode === 'internal' ? 'bg-green-600 hover:bg-green-700' : ''}
+              >
+                <FileText className="h-3 w-3 mr-1" />
+                Interne
+              </Button>
+              <Button
+                variant={searchMode === 'hybrid' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setSearchMode('hybrid')}
+                className={searchMode === 'hybrid' ? 'bg-blue-600 hover:bg-blue-700' : ''}
+              >
+                <Globe className="h-3 w-3 mr-1" />
+                Hybride
+              </Button>
+              <Button
+                variant={searchMode === 'science' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setSearchMode('science')}
+                className={searchMode === 'science' ? 'bg-purple-600 hover:bg-purple-700' : ''}
+              >
+                <Microscope className="h-3 w-3 mr-1" />
+                Science
+              </Button>
+            </div>
           </div>
         </CardHeader>
         
@@ -151,46 +189,77 @@ export default function ChatInterface() {
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Sources Consultées</p>
                         <div className="grid grid-cols-1 gap-2">
                           {msg.sources.map((src, idx) => {
-                            const contentIcon = src.content_type === 'figure' ? <ImageIcon className="h-3 w-3" /> :
-                                               src.content_type === 'table' ? <Table className="h-3 w-3" /> :
-                                               <FileText className="h-3 w-3" />;
+                            const isExternal = src.source_type === 'external';
+
+                            // Icône selon type
+                            const contentIcon = isExternal ?
+                              <Globe className="h-3 w-3" /> :
+                              (src.content_type === 'figure' ? <ImageIcon className="h-3 w-3" /> :
+                               src.content_type === 'table' ? <Table className="h-3 w-3" /> :
+                               <FileText className="h-3 w-3" />);
 
                             return (
                               <div
                                 key={idx}
                                 onClick={() => {
-                                  const pageNum = parseInt(src.page_label);
-                                  console.log('Clicked source:', { fileName: src.file_name, pageLabel: src.page_label, pageNum });
-                                  if (!isNaN(pageNum)) {
-                                    console.log('Setting selected PDF:', { fileName: src.file_name, pageNumber: pageNum });
-                                    setSelectedPDF({ fileName: src.file_name, pageNumber: pageNum });
+                                  if (isExternal && src.url) {
+                                    window.open(src.url, '_blank');
                                   } else {
-                                    console.error('Invalid page number:', src.page_label);
+                                    const pageNum = parseInt(src.page_label);
+                                    if (!isNaN(pageNum)) {
+                                      setSelectedPDF({ fileName: src.file_name, pageNumber: pageNum });
+                                    }
                                   }
                                 }}
-                                className="text-xs bg-gray-50 border p-2 rounded hover:bg-blue-50 hover:border-blue-300 transition-colors cursor-pointer group"
+                                className={`text-xs border p-2 rounded cursor-pointer group transition-colors ${
+                                  isExternal
+                                    ? 'bg-blue-50 border-blue-200 hover:bg-blue-100 hover:border-blue-400'
+                                    : 'bg-gray-50 border-gray-200 hover:bg-blue-50 hover:border-blue-300'
+                                }`}
                               >
-                                <div className="flex items-center gap-2 font-medium text-gray-700">
+                                <div className="flex items-center gap-2 font-medium">
                                   {contentIcon}
-                                  <span className="group-hover:text-blue-600 transition-colors">
-                                    {src.file_name} (Page {src.page_label})
+                                  <span className={`group-hover:text-blue-600 ${isExternal ? 'text-blue-700' : 'text-gray-700'}`}>
+                                    {isExternal ? src.title : `${src.file_name} (Page ${src.page_label})`}
                                   </span>
+
+                                  {/* Badge type de source */}
                                   <Badge
-                                    variant={src.content_type === 'figure' ? 'secondary' : 'outline'}
-                                    className="ml-auto text-[10px] h-4"
+                                    variant={isExternal ? 'default' : 'outline'}
+                                    className={`ml-auto text-[10px] h-4 ${isExternal ? 'bg-blue-600' : ''}`}
                                   >
-                                    {src.content_type === 'figure' ? 'Figure' :
-                                     src.content_type === 'table' ? 'Tableau' : 'Texte'}
+                                    {isExternal ? 'Externe' : 'Interne'}
                                   </Badge>
+
+                                  {/* Badge type de contenu (interne seulement) */}
+                                  {!isExternal && (
+                                    <Badge variant="outline" className="text-[10px] h-4">
+                                      {src.content_type === 'figure' ? 'Figure' :
+                                       src.content_type === 'table' ? 'Tableau' : 'Texte'}
+                                    </Badge>
+                                  )}
+
+                                  {/* Score */}
                                   <Badge variant="outline" className="text-[10px] h-4">
                                     {src.score.toFixed(2)}
                                   </Badge>
                                 </div>
-                                <p className="mt-1 text-gray-500 line-clamp-2 italic group-hover:line-clamp-none transition-all">
+
+                                {/* Extrait */}
+                                <p className="mt-1 text-gray-500 line-clamp-2 group-hover:line-clamp-none">
                                   &quot;{src.text}&quot;
                                 </p>
-                                <p className="mt-1 text-[10px] text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  Cliquer pour ouvrir le PDF
+
+                                {/* Info publication (externe) */}
+                                {isExternal && src.publication_info && (
+                                  <p className="mt-1 text-[10px] text-blue-600 italic">
+                                    {src.publication_info}
+                                  </p>
+                                )}
+
+                                {/* Tooltip hover */}
+                                <p className="mt-1 text-[10px] text-blue-500 opacity-0 group-hover:opacity-100">
+                                  {isExternal ? 'Cliquer pour ouvrir l\'article' : 'Cliquer pour ouvrir le PDF'}
                                 </p>
                               </div>
                             );
@@ -215,7 +284,13 @@ export default function ChatInterface() {
                     </Avatar>
                     <div className="bg-gray-100 p-4 rounded-lg flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin text-gray-500" />
-                      <span className="text-sm text-gray-500">Analyse des documents en cours...</span>
+                      <span className="text-sm text-gray-500">
+                        {searchMode === 'internal'
+                          ? 'Analyse des documents en cours...'
+                          : searchMode === 'hybrid'
+                          ? 'Analyse des documents et recherche web...'
+                          : 'Analyse des documents et recherche littérature scientifique...'}
+                      </span>
                     </div>
                 </div>
               )}

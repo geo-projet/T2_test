@@ -8,3 +8,4 @@ llama-index-vector-stores-chroma
 nest_asyncio
 openai
 pypdf
+httpx
