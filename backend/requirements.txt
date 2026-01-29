@@ -6,3 +6,5 @@ llama-parse
 chromadb
 llama-index-vector-stores-chroma
 nest_asyncio
+openai
+pypdf

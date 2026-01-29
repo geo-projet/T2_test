@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, FileText, Loader2 } from 'lucide-react';
+import { Send, Bot, FileText, Loader2, Image as ImageIcon, Table } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import dynamic from 'next/dynamic';
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,11 +12,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
+// Dynamically import PDFViewer to avoid SSR issues
+const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
+  ssr: false,
+});
+
 interface Source {
   text: string;
   score: number;
   page_label: string;
   file_name: string;
+  content_type: string;
 }
 
 interface Message {
@@ -31,6 +38,12 @@ export default function ChatInterface() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const [selectedPDF, setSelectedPDF] = useState<{ fileName: string; pageNumber: number } | null>(null);
+
+  // Debug: Log when selectedPDF changes
+  useEffect(() => {
+    console.log('selectedPDF state changed:', selectedPDF);
+  }, [selectedPDF]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -83,9 +96,23 @@ export default function ChatInterface() {
     }
   };
 
+  console.log('Rendering component, selectedPDF:', selectedPDF);
+
   return (
-    <div className="flex h-screen bg-gray-50 p-4 justify-center items-center">
-      <Card className="w-full max-w-4xl h-[90vh] flex flex-col shadow-xl">
+    <>
+      {selectedPDF && (
+        <>
+          {console.log('Rendering PDFViewer with:', selectedPDF)}
+          <PDFViewer
+            fileName={selectedPDF.fileName}
+            pageNumber={selectedPDF.pageNumber}
+            onClose={() => setSelectedPDF(null)}
+          />
+        </>
+      )}
+
+      <div className="flex h-screen bg-gray-50 p-4 justify-center items-center">
+        <Card className="w-full max-w-4xl h-[90vh] flex flex-col shadow-xl">
         <CardHeader className="border-b bg-white rounded-t-xl">
           <div className="flex items-center gap-2">
             <Bot className="h-6 w-6 text-green-600" />
@@ -123,18 +150,51 @@ export default function ChatInterface() {
                       <div className="mt-2 space-y-2 w-full">
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Sources Consultées</p>
                         <div className="grid grid-cols-1 gap-2">
-                          {msg.sources.map((src, idx) => (
-                            <div key={idx} className="text-xs bg-gray-50 border p-2 rounded hover:bg-gray-100 transition-colors cursor-pointer group">
-                              <div className="flex items-center gap-2 font-medium text-gray-700">
-                                <FileText className="h-3 w-3" />
-                                <span>{src.file_name} (Page {src.page_label})</span>
-                                <Badge variant="outline" className="ml-auto text-[10px] h-4">Score: {src.score.toFixed(2)}</Badge>
+                          {msg.sources.map((src, idx) => {
+                            const contentIcon = src.content_type === 'figure' ? <ImageIcon className="h-3 w-3" /> :
+                                               src.content_type === 'table' ? <Table className="h-3 w-3" /> :
+                                               <FileText className="h-3 w-3" />;
+
+                            return (
+                              <div
+                                key={idx}
+                                onClick={() => {
+                                  const pageNum = parseInt(src.page_label);
+                                  console.log('Clicked source:', { fileName: src.file_name, pageLabel: src.page_label, pageNum });
+                                  if (!isNaN(pageNum)) {
+                                    console.log('Setting selected PDF:', { fileName: src.file_name, pageNumber: pageNum });
+                                    setSelectedPDF({ fileName: src.file_name, pageNumber: pageNum });
+                                  } else {
+                                    console.error('Invalid page number:', src.page_label);
+                                  }
+                                }}
+                                className="text-xs bg-gray-50 border p-2 rounded hover:bg-blue-50 hover:border-blue-300 transition-colors cursor-pointer group"
+                              >
+                                <div className="flex items-center gap-2 font-medium text-gray-700">
+                                  {contentIcon}
+                                  <span className="group-hover:text-blue-600 transition-colors">
+                                    {src.file_name} (Page {src.page_label})
+                                  </span>
+                                  <Badge
+                                    variant={src.content_type === 'figure' ? 'secondary' : 'outline'}
+                                    className="ml-auto text-[10px] h-4"
+                                  >
+                                    {src.content_type === 'figure' ? 'Figure' :
+                                     src.content_type === 'table' ? 'Tableau' : 'Texte'}
+                                  </Badge>
+                                  <Badge variant="outline" className="text-[10px] h-4">
+                                    {src.score.toFixed(2)}
+                                  </Badge>
+                                </div>
+                                <p className="mt-1 text-gray-500 line-clamp-2 italic group-hover:line-clamp-none transition-all">
+                                  &quot;{src.text}&quot;
+                                </p>
+                                <p className="mt-1 text-[10px] text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  Cliquer pour ouvrir le PDF
+                                </p>
                               </div>
-                              <p className="mt-1 text-gray-500 line-clamp-2 italic group-hover:line-clamp-none transition-all">
-                                &quot;{src.text}&quot;
-                              </p>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -181,5 +241,6 @@ export default function ChatInterface() {
         </CardFooter>
       </Card>
     </div>
+    </>
   );
 }

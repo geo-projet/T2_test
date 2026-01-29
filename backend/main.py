@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
@@ -24,6 +25,7 @@ app.add_middleware(
 
 # Configuration (must match ingest.py)
 CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./chroma_db")
+DATA_DIR = os.getenv("DATA_DIR", "./data")
 Settings.embedding = OpenAIEmbedding(model="text-embedding-3-small")
 Settings.llm = OpenAI(model="gpt-4o", temperature=0)
 
@@ -56,6 +58,7 @@ class SourceNode(BaseModel):
     score: float
     page_label: str = "N/A"
     file_name: str = "N/A"
+    content_type: str = "text"
 
 class QueryResponse(BaseModel):
     answer: str
@@ -85,7 +88,32 @@ def chat_endpoint(request: QueryRequest):
             text=node.node.get_content()[:500] + "...", # Truncate for display
             score=node.score or 0.0,
             page_label=str(metadata.get("page_label", "N/A")),
-            file_name=str(metadata.get("file_name", "N/A"))
+            file_name=str(metadata.get("file_name", "N/A")),
+            content_type=str(metadata.get("content_type", "text"))
         ))
-    
+
     return QueryResponse(answer=str(response), sources=sources)
+
+@app.get("/pdf/{filename:path}")
+def get_pdf(filename: str):
+    """Serve PDF files from the data directory"""
+    pdf_path = os.path.join(DATA_DIR, filename)
+
+    # Security: Ensure the requested file is within DATA_DIR
+    pdf_path = os.path.abspath(pdf_path)
+    data_dir_abs = os.path.abspath(DATA_DIR)
+
+    if not pdf_path.startswith(data_dir_abs):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="PDF file not found")
+
+    if not pdf_path.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Not a PDF file")
+
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=filename
+    )
