@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, FileText, Loader2, Image as ImageIcon, Table, Globe, Microscope } from 'lucide-react';
+import { Send, Bot, FileText, Loader2, Image as ImageIcon, Table, Globe, Microscope, LogOut } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import dynamic from 'next/dynamic';
 
@@ -14,6 +14,11 @@ import { Badge } from "@/components/ui/badge";
 
 // Dynamically import PDFViewer to avoid SSR issues
 const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
+  ssr: false,
+});
+
+// Dynamically import LoginPage to avoid SSR issues with localStorage
+const LoginPage = dynamic(() => import('@/components/LoginPage'), {
   ssr: false,
 });
 
@@ -36,6 +41,8 @@ interface Message {
 }
 
 export default function ChatInterface() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: "Bonjour ! Je suis votre assistant environnemental expert. Posez-moi une question sur vos documents." }
   ]);
@@ -44,6 +51,13 @@ export default function ChatInterface() {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [selectedPDF, setSelectedPDF] = useState<{ fileName: string; pageNumber: number } | null>(null);
   const [searchMode, setSearchMode] = useState<'internal' | 'hybrid' | 'science'>('internal');
+
+  // Vérifier l'authentification au chargement
+  useEffect(() => {
+    const authStatus = localStorage.getItem('isAuthenticated');
+    setIsAuthenticated(authStatus === 'true');
+    setIsCheckingAuth(false);
+  }, []);
 
   // Debug: Log when selectedPDF changes
   useEffect(() => {
@@ -101,7 +115,30 @@ export default function ChatInterface() {
     }
   };
 
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('isAuthenticated');
+    setIsAuthenticated(false);
+  };
+
   console.log('Rendering component, selectedPDF:', selectedPDF);
+
+  // Afficher un loader pendant la vérification de l'authentification
+  if (isCheckingAuth) {
+    return (
+      <div className="flex h-screen bg-gray-50 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-green-600" />
+      </div>
+    );
+  }
+
+  // Si non authentifié, afficher la page de login
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
 
   return (
     <>
@@ -125,7 +162,7 @@ export default function ChatInterface() {
               <CardTitle>Assistant RAG Environnemental</CardTitle>
             </div>
 
-            {/* Sélecteur de mode */}
+            {/* Sélecteur de mode et déconnexion */}
             <div className="flex gap-2">
               <Button
                 variant={searchMode === 'internal' ? 'default' : 'outline'}
@@ -153,6 +190,15 @@ export default function ChatInterface() {
               >
                 <Microscope className="h-3 w-3 mr-1" />
                 Science
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLogout}
+                className="ml-2"
+                title="Se déconnecter"
+              >
+                <LogOut className="h-3 w-3" />
               </Button>
             </div>
           </div>
