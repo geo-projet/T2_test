@@ -1,7 +1,7 @@
 # Rapport Tech Stack : Assistant RAG Environnemental
 
 **Date :** 26 Janvier 2026 — **Mis à jour :** Février 2026
-**Statut :** Options retenues marquées ✅ — Implémentées en Phase 1 & 2.
+**Statut :** Options retenues marquées ✅ — Implémentées en Phase 1, 2 & 2.5.
 
 ---
 
@@ -86,11 +86,32 @@ Cela déplace la complexité de l'application du "Chat" vers le **Pipeline d'Ing
 
 | Composant | Choix | Détail |
 | :--- | :--- | :--- |
-| **Framework** ✅ | Next.js 16 (App Router) | SSR désactivé pour les composants avec localStorage (`dynamic` + `ssr: false`). |
+| **Framework** ✅ | Next.js 16 (App Router) | SSR désactivé pour les composants avec localStorage ou DOM (`dynamic` + `ssr: false`). |
 | **UI** ✅ | shadcn/ui + Tailwind CSS v4 | Composants : Button, Input, Card, ScrollArea, Avatar, Badge. |
 | **Markdown** ✅ | react-markdown | Rendu avec composants personnalisés (`h2` → bold, `h3` → semibold). |
 | **PDF** ✅ | react-pdf (pdfjs-dist v5) | Chargement avec `Authorization` header, mémoïsation du `file` prop. |
 | **Auth** ✅ | Token localStorage | Token reçu du backend, envoyé en `Bearer` header sur `/chat` et `/pdf`. |
+
+---
+
+### H. Cartographie (Phase 2.5)
+
+| Option | Description | Verdict |
+| :--- | :--- | :--- |
+| **OpenLayers (`ol`)** ✅ | Librairie cartographique open-source mature, support projection EPSG:4326. | Solide, bien documentée, gestion fine des couches vectorielles et des interactions. |
+| **Leaflet** | Alternative légère, très populaire. | Moins adapté aux projections personnalisées et aux interactions avancées. |
+| **MapLibre GL** | Rendu WebGL haute performance. | Plus adapté aux grands jeux de données, complexité accrue pour ce périmètre. |
+
+**Choix retenu : OpenLayers** — projection EPSG:4326 native, VectorSource/VectorLayer pour les GeoJSON, Draw interaction pour les ROI, Select interaction pour les attributs. Chargé en `dynamic(..., { ssr: false })` car dépendant du DOM navigateur.
+
+**Architecture cartographique :**
+- `MapComponent.tsx` — carte OpenLayers, fonds OSM/Satellite, gestion des couches actives, outils (navigation, sélection, dessin ROI)
+- `MapSidebar.tsx` — explorateur de couches groupées avec checkboxes, sélecteur de couleur par couche
+- `ToolButton.tsx` — bouton d'outil générique avec état actif
+- `/api/layers` (Next.js route) — liste les sous-dossiers et fichiers GeoJSON depuis `GEOJSON_PATH`
+- `/api/layers/data` (Next.js route) — sert le contenu GeoJSON avec validation anti-path-traversal et vérification d'extension
+
+**Données GeoJSON :** servies par des routes API Next.js internes (évite le CORS), répertoire configurable via `GEOJSON_PATH` dans `.env.local`. Structure attendue : `<GEOJSON_PATH>/<groupe>/<fichier>.geojson`.
 
 ---
 
@@ -108,6 +129,13 @@ backend/chroma_db/     ← Index vectoriel persistant (collection "rag_collectio
 main.py /chat          ← Mode internal : ChromaDB top-K → gpt-4o
                        ← Mode hybrid  : ChromaDB + Tavily web → gpt-4o (synthèse)
                        ← Mode science : Tavily (domaines filtrés, query EN) → gpt-4o (bilingue FR/EN)
+
+<GEOJSON_PATH>/        ← Fichiers GeoJSON organisés par groupes (sous-dossiers)
+       ↓
+/api/layers            ← Liste des groupes et couches disponibles
+/api/layers/data       ← Contenu GeoJSON d'une couche (avec sécurité path-traversal)
+       ↓
+MapComponent.tsx       ← Rendu OpenLayers dans le navigateur
 ```
 
 ---
@@ -120,6 +148,7 @@ main.py /chat          ← Mode internal : ChromaDB top-K → gpt-4o
 | Comparaison passwords | `secrets.compare_digest()` — résistant aux timing attacks. |
 | Tokens de session | `secrets.token_urlsafe(32)` — 256 bits d'entropie, invalidés côté serveur au logout. |
 | Serving PDF | Vérification de path traversal (`startswith(data_dir_abs)`), extension `.pdf` imposée. |
+| Serving GeoJSON | Vérification de path traversal (`startswith(resolvedRootPath)`), extensions `.geojson`/`.json` uniquement, validation du type GeoJSON. |
 | CORS | `allow_origins=["*"]` acceptable en dev ; à restreindre au domaine frontend en production. |
 
 ---
@@ -131,3 +160,5 @@ main.py /chat          ← Mode internal : ChromaDB top-K → gpt-4o
 - **Description des figures** : intégrer un modèle Vision (GPT-4o Vision ou Gemini Flash) dans `ingest.py` pour générer des descriptions textuelles des images extraites.
 - **Streaming** : implémenter le streaming des réponses LLM pour une meilleure UX sur les réponses longues.
 - **Rate limiting** : protéger les endpoints contre les abus (ex: `slowapi`).
+- **Lien carte–RAG** : filtrer les documents RAG par emprise spatiale (bounding box de la zone sélectionnée sur la carte), nécessite l'ajout de métadonnées géospatiales lors de l'ingestion.
+- **Auth GeoJSON** : les routes `/api/layers` et `/api/layers/data` sont actuellement publiques ; ajouter une vérification de token si les données cartographiques sont sensibles.

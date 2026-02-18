@@ -1,15 +1,22 @@
 # Assistant RAG Environnemental Hybride
 
-Plateforme web permettant à des experts en environnement d'interroger en langage naturel une base de connaissances constituée de rapports PDF techniques internes, avec possibilité de croiser ces données avec la littérature scientifique ouverte en temps réel.
+Plateforme web permettant à des experts en environnement d'interroger en langage naturel une base de connaissances constituée de rapports PDF techniques internes, avec possibilité de croiser ces données avec la littérature scientifique ouverte en temps réel et de visualiser les données géospatiales sur une carte interactive.
 
 ## Fonctionnalités implémentées
 
-### Modes de recherche
+### Modes de recherche RAG
 | Mode | Description |
 |---|---|
 | **Interne** | RAG sur les PDF internes uniquement. Réponse citant la page et le document source. |
 | **Hybride** | RAG interne + recherche web générale (Tavily). Réponse structurée en deux sections distinctes. |
 | **Science** | Recherche dans la littérature scientifique (domaines filtrés via Tavily). La requête est automatiquement traduite FR→EN. Réponse bilingue : français d'abord, version anglaise originale en dessous. |
+
+### Carte interactive (OpenLayers)
+- **Panneau cartographique** : s'ouvre en cliquant sur l'icône carte dans l'en-tête — occupe 2/3 de l'écran, le chat RAG se réduit à 1/3
+- **Explorateur de couches** : sidebar listée par groupes, activation par case à cocher, sélecteur de couleur par couche
+- **Fonds de carte** : OSM ou Google Satellite (radio buttons)
+- **Outils** : navigation, sélection d'entité (affichage des attributs), dessin de zones ROI rectangulaires
+- **Données** : fichiers GeoJSON chargés dynamiquement depuis un répertoire local configurable (`GEOJSON_PATH`)
 
 ### Autres fonctionnalités
 - **Authentification** : login sécurisé via credentials stockés côté serveur (`.env`), token d'accès par session
@@ -41,6 +48,7 @@ Plateforme web permettant à des experts en environnement d'interroger en langag
 | UI | shadcn/ui + Tailwind CSS v4 |
 | Markdown | react-markdown |
 | PDF | react-pdf (pdfjs-dist) |
+| Cartographie | OpenLayers (`ol`) |
 
 ---
 
@@ -49,19 +57,26 @@ Plateforme web permettant à des experts en environnement d'interroger en langag
 ```
 .
 ├── backend/
-│   ├── data/               # PDF à ingérer (à créer)
-│   ├── chroma_db/          # Base vectorielle persistante (générée par ingest.py)
+│   ├── data/               # PDF à ingérer (à créer, non versionné)
+│   ├── chroma_db/          # Base vectorielle (générée par ingest.py, non versionnée)
 │   ├── main.py             # API FastAPI (endpoints /login, /logout, /chat, /pdf)
 │   ├── ingest.py           # Script d'ingestion et d'indexation des PDF
 │   ├── requirements.txt    # Dépendances Python
 │   └── .env.example        # Variables d'environnement requises
 ├── frontend/
 │   ├── app/
-│   │   ├── page.tsx        # Interface de chat principale
-│   │   └── layout.tsx      # Layout global
+│   │   ├── page.tsx        # Interface principale (chat + toggle carte)
+│   │   ├── layout.tsx      # Layout global
+│   │   └── api/
+│   │       └── layers/
+│   │           ├── route.ts        # GET /api/layers (liste des couches GeoJSON)
+│   │           └── data/route.ts   # GET /api/layers/data?path=... (contenu GeoJSON)
 │   ├── components/
 │   │   ├── LoginPage.tsx   # Page de connexion
 │   │   ├── PDFViewer.tsx   # Visionneuse PDF avec authentification
+│   │   ├── MapComponent.tsx  # Carte OpenLayers
+│   │   ├── MapSidebar.tsx    # Panneau de gestion des couches GeoJSON
+│   │   ├── ToolButton.tsx    # Bouton d'outil carte réutilisable
 │   │   └── ui/             # Composants shadcn/ui
 │   └── lib/
 ├── PRD.md
@@ -95,7 +110,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Créer le fichier `backend/.env` à partir de `.env.example` :
+Créer `backend/.env` à partir de `.env.example` :
 
 ```env
 OPENAI_API_KEY=sk-...
@@ -139,7 +154,12 @@ npm install
 Créer `frontend/.env.local` :
 
 ```env
+# URL de l'API backend
 NEXT_PUBLIC_API_URL=http://localhost:8000
+
+# Chemin vers le répertoire GeoJSON (relatif à frontend/)
+# Structure attendue : <GEOJSON_PATH>/<groupe>/<fichier>.geojson
+GEOJSON_PATH=../../mpk_to_geojson/geojson_dir
 ```
 
 Lancer le serveur de développement :
@@ -159,6 +179,20 @@ Application disponible sur `http://localhost:3000`.
 3. Lancer le backend (`fastapi dev main.py`) et le frontend (`npm run dev`)
 4. Ouvrir `http://localhost:3000`, se connecter avec les credentials définis dans `.env`
 5. Choisir le mode de recherche et poser une question
+6. Cliquer sur l'icône **carte** (en-tête, à droite) pour ouvrir la vue cartographique
+
+### Données cartographiques
+
+Placer les fichiers GeoJSON dans le répertoire pointé par `GEOJSON_PATH`, organisés en sous-dossiers (groupes) :
+
+```
+<GEOJSON_PATH>/
+  sites/
+    zone_etude.geojson
+    points_mesure.geojson
+  bassins_versants/
+    bassin_principal.geojson
+```
 
 ---
 
@@ -170,11 +204,14 @@ Application disponible sur `http://localhost:3000`.
 | `POST` | `/logout` | Oui | Invalide le token de session |
 | `POST` | `/chat` | Oui | Requête RAG (modes : internal, hybrid, science) |
 | `GET` | `/pdf/{filename}` | Oui | Sert un PDF depuis `data/` |
+| `GET` | `/api/layers` | Non | Liste les groupes et fichiers GeoJSON disponibles |
+| `GET` | `/api/layers/data?path=` | Non | Retourne le contenu d'un fichier GeoJSON |
 
 ---
 
 ## Roadmap
 
-- [x] Phase 1 — MVP : ingestion PDF, RAG interne, citations sources
-- [x] Phase 2 — V1 : mode hybride (interne + web), mode science (littérature filtrée + traduction auto), authentification sécurisée
-- [ ] Phase 3 — V2 : upload de PDF temporaires, historique des sessions, export des réponses
+- [x] Phase 1 — MVP : ingestion PDF, RAG interne, citations sources, visionneuse PDF
+- [x] Phase 2 — V1 : mode hybride, mode science (traduction auto + réponse bilingue), authentification sécurisée
+- [x] Phase 2.5 — Cartographie : vue carte OpenLayers intégrée, couches GeoJSON, outils de navigation/sélection/dessin
+- [ ] Phase 3 — V2 : upload de PDF temporaires, historique des sessions, export des réponses, descriptions de figures via Vision
