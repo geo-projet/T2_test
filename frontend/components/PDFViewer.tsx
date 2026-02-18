@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,15 +14,21 @@ interface PDFViewerProps {
   fileName: string;
   pageNumber: number;
   onClose: () => void;
+  token: string;
 }
 
-export default function PDFViewer({ fileName, pageNumber, onClose }: PDFViewerProps) {
+export default function PDFViewer({ fileName, pageNumber, onClose, token }: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(pageNumber);
   const [scale, setScale] = useState<number>(1.0);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const pdfUrl = `${apiUrl}/pdf/${encodeURIComponent(fileName)}`;
+
+  const pdfFile = useMemo(
+    () => ({ url: pdfUrl, httpHeaders: { Authorization: `Bearer ${token}` } }),
+    [pdfUrl, token]
+  );
 
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
     setNumPages(numPages);
@@ -102,7 +108,7 @@ export default function PDFViewer({ fileName, pageNumber, onClose }: PDFViewerPr
         <div className="flex-1 overflow-auto bg-gray-100 p-4">
           <div className="flex justify-center">
             <Document
-              file={pdfUrl}
+              file={pdfFile}
               onLoadSuccess={onDocumentLoadSuccess}
               loading={
                 <div className="flex items-center justify-center p-8">

@@ -1,9 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from __future__ import annotations
+
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
+import secrets
 import chromadb
 import httpx
 import logging
@@ -33,8 +37,16 @@ app.add_middleware(
 # Configuration (must match ingest.py)
 CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./chroma_db")
 DATA_DIR = os.getenv("DATA_DIR", "./data")
+AUTH_USERNAME = os.getenv("AUTH_USERNAME")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD")
+
 Settings.embedding = OpenAIEmbedding(model="text-embedding-3-small")
 Settings.llm = OpenAI(model="gpt-4o", temperature=0)
+
+# Token store (in-memory, invalidated on server restart)
+valid_tokens: set[str] = set()
+
+security = HTTPBearer()
 
 # Global Index Variable
 index = None
@@ -45,7 +57,7 @@ def get_index():
         if not os.path.exists(CHROMA_DB_DIR):
             print("⚠️ Warning: ChromaDB directory not found. Have you run ingest.py?")
             return None
-        
+
         print("Loading Vector Index...")
         db = chromadb.PersistentClient(path=CHROMA_DB_DIR)
         chroma_collection = db.get_or_create_collection("rag_collection")
@@ -56,6 +68,30 @@ def get_index():
             storage_context=storage_context,
         )
     return index
+
+
+# --- Auth models ---
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class LoginResponse(BaseModel):
+    token: str
+
+
+# --- Auth dependency ---
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    if credentials.credentials not in valid_tokens:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalide ou expiré",
+        )
+    return credentials.credentials
+
+
+# --- Query models ---
 
 class QueryRequest(BaseModel):
     query: str
@@ -77,8 +113,39 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceNode]
 
-# Startup event removed to prevent timeouts on Render Free Tier
-# The index will be loaded lazily on the first /chat request
+
+# --- Auth endpoints ---
+
+@app.post("/login", response_model=LoginResponse)
+async def login(request: LoginRequest):
+    if not AUTH_USERNAME or not AUTH_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentification non configurée sur le serveur",
+        )
+
+    username_ok = secrets.compare_digest(request.username, AUTH_USERNAME)
+    password_ok = secrets.compare_digest(request.password, AUTH_PASSWORD)
+
+    if not (username_ok and password_ok):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Identifiants incorrects",
+        )
+
+    token = secrets.token_urlsafe(32)
+    valid_tokens.add(token)
+    logger.info(f"Login successful for user: {request.username}")
+    return LoginResponse(token=token)
+
+
+@app.post("/logout")
+async def logout(token: str = Depends(verify_token)):
+    valid_tokens.discard(token)
+    return {"message": "Déconnecté"}
+
+
+# --- Utility functions ---
 
 async def search_web_agent(query: str, max_results: int = 3, use_domain_filters: bool = True) -> list[SourceNode]:
     """
@@ -150,7 +217,7 @@ async def search_web_agent(query: str, max_results: int = 3, use_domain_filters:
         logger.error(f"Erreur Web Agent: {e}")
         return []  # Dégradation gracieuse
 
-def synthesize_hybrid_response(
+async def synthesize_hybrid_response(
     query: str,
     internal_sources: list[SourceNode],
     external_sources: list[SourceNode]
@@ -188,23 +255,26 @@ RÈGLES ANTI-HALLUCINATION:
     for i, src in enumerate(external_sources, len(internal_sources) + 1):
         context += f"[{i}] {src.title}: {src.text}\n\n"
 
-    # Appel LLM
+    # Appel LLM asynchrone
     messages = [
         ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
         ChatMessage(role=MessageRole.USER, content=f"Question: {query}\n\n{context}")
     ]
 
     llm = Settings.llm
-    response = llm.chat(messages)
+    response = await llm.achat(messages)
 
     return str(response.message.content)
+
+
+# --- Main endpoints ---
 
 @app.get("/")
 def read_root():
     return {"message": "RAG API is running"}
 
 @app.post("/chat", response_model=QueryResponse)
-async def chat_endpoint(request: QueryRequest):
+async def chat_endpoint(request: QueryRequest, token: str = Depends(verify_token)):
     """Route la requête selon le mode sélectionné."""
     logger.info(f"Chat request - Mode: {request.mode}, Query: {request.query}")
 
@@ -255,8 +325,8 @@ async def chat_endpoint(request: QueryRequest):
         # Requête externe SANS filtres de domaines (web complet)
         external_sources = await search_web_agent(request.query, max_results=2, use_domain_filters=False)
 
-        # Synthèse comparative
-        answer = synthesize_hybrid_response(
+        # Synthèse comparative (async)
+        answer = await synthesize_hybrid_response(
             request.query,
             internal_sources,
             external_sources
@@ -268,49 +338,69 @@ async def chat_endpoint(request: QueryRequest):
 
     elif request.mode == "science":
         # Mode Science: Revues scientifiques UNIQUEMENT (AVEC filtres de domaines)
-        # Pas de recherche interne, seulement sources scientifiques externes
+        # La requête est traduite FR→EN avant la recherche pour maximiser les résultats
 
-        # Requête externe AVEC filtres de domaines scientifiques
-        external_sources = await search_web_agent(request.query, max_results=5, use_domain_filters=True)
+        llm = Settings.llm
 
-        # Générer réponse basée uniquement sur sources scientifiques
+        # 1. Traduire la requête FR → EN
+        tr_messages = [
+            ChatMessage(
+                role=MessageRole.SYSTEM,
+                content="Translate the following French text to English. Return only the translation, nothing else."
+            ),
+            ChatMessage(role=MessageRole.USER, content=request.query)
+        ]
+        tr_response = await llm.achat(tr_messages)
+        english_query = str(tr_response.message.content).strip()
+        logger.info(f"Science - query translated: '{request.query}' → '{english_query}'")
+
+        # 2. Recherche externe avec la requête EN (AVEC filtres de domaines scientifiques)
+        external_sources = await search_web_agent(english_query, max_results=5, use_domain_filters=True)
+
+        # 3. Générer réponse bilingue (FR d'abord, EN original en dessous)
         if external_sources:
-            # Construire contexte scientifique
-            context = "Sources scientifiques:\n"
+            context = "Scientific sources:\n"
             for i, src in enumerate(external_sources, 1):
                 context += f"[{i}] {src.title}: {src.text}\n\n"
 
-            system_prompt = """
-Vous êtes un assistant scientifique expert. Analysez les articles scientifiques fournis et répondez à la question de l'utilisateur.
+            system_prompt = """You are an expert scientific assistant. Analyze the provided scientific articles and answer the user's question.
 
-RÈGLES:
-- Basez votre réponse UNIQUEMENT sur les articles scientifiques fournis
-- Citez systématiquement vos sources avec [numéro]
-- Mentionnez les auteurs, revues ou dates si pertinent
-- Si les articles ne contiennent pas l'information, dites "Les articles scientifiques consultés ne mentionnent pas..."
-- Ne pas inventer ou extrapoler au-delà des données fournies
-- Structurer la réponse de manière claire et académique
+RULES:
+- Base your response ONLY on the provided scientific articles
+- Systematically cite sources with [number]
+- Mention authors, journals or dates when relevant
+- If articles don't contain the information, say so explicitly
+- Do not invent or extrapolate beyond the provided data
+- Structure the response clearly and academically
+
+RESPONSE FORMAT — follow this structure strictly:
+1. Write the complete answer in FRENCH (the user's language)
+2. Add this exact separator on its own line: ---
+3. Add this label on its own line: **Version originale (anglais) :**
+4. Write the complete answer in ENGLISH, prefixing every paragraph with "> " (markdown blockquote)
 """
 
             messages = [
                 ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
-                ChatMessage(role=MessageRole.USER, content=f"Question: {request.query}\n\n{context}")
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=f"Question (FR): {request.query}\nQuestion (EN): {english_query}\n\n{context}"
+                )
             ]
 
-            llm = Settings.llm
-            response = llm.chat(messages)
+            response = await llm.achat(messages)
             answer = str(response.message.content)
         else:
             answer = "Aucun article scientifique trouvé pour cette requête dans les revues indexées."
 
-        logger.info(f"Science response - External (scientific): {len(external_sources)}")
+        logger.info(f"Science response - query EN: '{english_query}', sources: {len(external_sources)}")
         return QueryResponse(answer=answer, sources=external_sources)
 
     else:
         raise HTTPException(status_code=400, detail=f"Mode invalide: {request.mode}. Modes disponibles: internal, hybrid, science")
 
 @app.get("/pdf/{filename:path}")
-def get_pdf(filename: str):
+def get_pdf(filename: str, token: str = Depends(verify_token)):
     """Serve PDF files from the data directory"""
     pdf_path = os.path.join(DATA_DIR, filename)
 

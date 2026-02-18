@@ -1,8 +1,7 @@
-# Rapport de Recommandation Tech Stack : Assistant RAG Environnemental
+# Rapport Tech Stack : Assistant RAG Environnemental
 
-**Date :** 26 Janvier 2026
-**Contexte :** MVP (Phase 1), Données Locales, Backend Python, Frontend Next.js.
-**Focus :** Traitement de documents PDF complexes (Tableaux & Figures).
+**Date :** 26 Janvier 2026 — **Mis à jour :** Février 2026
+**Statut :** Options retenues marquées ✅ — Implémentées en Phase 1 & 2.
 
 ---
 
@@ -16,79 +15,119 @@ Cela déplace la complexité de l'application du "Chat" vers le **Pipeline d'Ing
 
 ## 2. Comparaison des Options Techniques
 
-### A. Moteur d'Ingestion & Parsing (Le Cœur du Système)
-*Le défi : Transformer des PDF non structurés en données structurées.*
+### A. Moteur d'Ingestion & Parsing
 
 | Option | Description | Avantages | Inconvénients |
 | :--- | :--- | :--- | :--- |
-| **1. PyMuPDF + Custom Logic** | Extraction manuelle via script Python bas niveau. | 100% Gratuit, Local, Rapide. Contrôle total. | Très complexe à maintenir pour les tableaux complexes. Nécessite beaucoup de code "glue". |
-| **2. Unstructured.io (Open Source)** | Librairie polyvalente de traitement de documents. | Populaire, gère beaucoup de formats. Version locale disponible. | Lourd à installer (dépendances système). Parfois imprécis sur les tableaux denses sans OCR lourd. |
-| **3. LlamaParse (LlamaIndex)** | API spécialisée dans les documents complexes avec RAG en tête. | **État de l'art** pour les tableaux et la structure. Intégration native LlamaIndex. | C'est une API (données sortent temporairement pour parsing, même si secure). |
-| **4. Docling (IBM)** | Nouvelle librairie open-source performante. | Exécution locale, excellente préservation du layout, export Markdown/JSON propre. | Écosystème plus jeune que Unstructured. |
+| **1. PyMuPDF + Custom Logic** | Extraction manuelle bas niveau. | 100% gratuit, local, rapide. | Très complexe sur tableaux denses. |
+| **2. Unstructured.io** | Librairie polyvalente multi-formats. | Populaire, version locale. | Lourd à installer, imprécis sur tableaux denses. |
+| **3. LlamaParse (LlamaIndex)** ✅ | API spécialisée PDF complexes. | État de l'art pour tableaux. Intégration native LlamaIndex. | API externe (données sortent temporairement). |
+| **4. Docling (IBM)** | Librairie open-source locale. | Exécution locale, export Markdown/JSON propre. | Écosystème plus jeune. |
 
-> **Analyse :** Pour un MVP qui doit réussir le test des "tableaux complexes", **LlamaParse** est souvent la solution la plus robuste immédiatement. Cependant, si le "100% Local" est strict pour le parsing, **Docling** est la meilleure alternative moderne locale.
+**Choix retenu : LlamaParse** — meilleure précision sur les tableaux denses, intégration directe avec LlamaIndex, export Markdown structuré. Configuration : `result_type="markdown"`, `language="fr"`, 4 workers parallèles.
 
-### B. Base de Données Vectorielle (Stockage Local)
+---
 
-| Option | Description | Pourquoi pour ce projet ? |
-| :--- | :--- | :--- |
-| **1. ChromaDB** | Base vectorielle open-source, focus Python. | Très simple à configurer en mode persistant local (fichier). Parfait pour le dev. |
-| **2. LanceDB** | Base vectorielle "Serverless" sur fichier. | Extrêmement rapide, stocke les données SUR disque (pas besoin de RAM massive). Supporte bien le multi-modal (images). |
-| **3. Qdrant (Docker)** | Moteur de recherche vectorielle robuste. | Très puissant, mais nécessite un conteneur Docker qui tourne. Un peu "overkill" pour un simple script MVP local. |
-
-### C. Orchestration LLM
+### B. Base de Données Vectorielle
 
 | Option | Description | Verdict |
 | :--- | :--- | :--- |
-| **1. LangChain** | Le standard généraliste. | Très flexible, mais abstraction parfois lourde pour des pipelines de données précis. |
-| **2. LlamaIndex** | Framework centré sur la "Data". | **Gagnant**. Conçu spécifiquement pour le RAG complexe, l'indexation structurée et les nœuds de métadonnées (requis par le PRD). |
+| **1. ChromaDB** ✅ | Base vectorielle open-source Python-native. | Simple, persistant local (`./chroma_db`), parfait pour le dev et la prod single-server. |
+| **2. LanceDB** | Base vectorielle sur fichier, très rapide. | Excellente option si multi-modal requis. |
+| **3. Qdrant (Docker)** | Moteur de recherche vectorielle robuste. | Overkill pour ce périmètre, nécessite Docker. |
 
-### D. Backend API (Python)
+**Choix retenu : ChromaDB** — mode persistant local, intégration `llama-index-vector-stores-chroma`, suppression/recréation de collection à chaque ingestion pour éviter les doublons.
+
+---
+
+### C. Orchestration LLM
 
 | Option | Verdict |
 | :--- | :--- |
-| **FastAPI** | **Gagnant incontesté**. Support natif de l'async (crucial pour le streaming LLM), validation Pydantic forte, génération automatique de la doc (Swagger) pour le frontend. |
-| **Flask/Django** | Moins adaptés aux websockets/streaming modernes requis pour une UI de chat fluide. |
+| **LlamaIndex** ✅ | Conçu pour le RAG complexe et l'indexation structurée avec métadonnées. |
+| **LangChain** | Flexible mais abstraction parfois lourde pour des pipelines de données précis. |
+
+**Choix retenu : LlamaIndex** — `VectorStoreIndex`, `as_query_engine(similarity_top_k=N)`, support natif des métadonnées de nodes (page, fichier, type de contenu).
 
 ---
 
-## 3. Recommandation Finale : La Stack "Robust RAG"
+### D. LLM & Embeddings
 
-Pour maximiser les chances de succès sur l'extraction des tableaux et figures dès le MVP, voici la combinaison recommandée :
-
-### Backend (Python)
-*   **Framework API :** `FastAPI`
-*   **Orchestration :** `LlamaIndex` (pour ses capacités avancées de requêtage sur structures complexes).
-*   **Ingestion (Parsing) :**
-    *   *Choix A (Performance max)* : `LlamaParse` (Via API).
-    *   *Choix B (100% Local)* : `Docling` (Python package).
-    *   *Traitement Figures :* Utilisation d'un modèle Vision local (ex: `Llava` via `Ollama`) ou API (ex: `Gemini Flash`) pour générer les descriptions des images extraites.
-*   **Vector DB :** `ChromaDB` (Mode persistant local `./chroma_db`).
-*   **Vision/LLM :** Pour le MVP, utiliser une API performante (Gemini Pro/Flash ou GPT-4o) est recommandé pour valider la logique avant de passer au local (Ollama) si nécessaire, car les modèles locaux peinent encore sur l'interprétation fine de tableaux complexes.
-
-### Frontend (Next.js)
-*   **Framework :** `Next.js 15` (App Router).
-*   **UI Library :** `shadcn/ui` + `Tailwind CSS` (Pour une UI propre et rapide sans design complexe).
-*   **State Server :** `TanStack Query` (React Query) pour gérer les états de chargement de l'API.
-*   **PDF Viewer :** `react-pdf` ou simplement l'iframe natif pour le MVP (Citations cliquables).
+| Composant | Choix | Détail |
+| :--- | :--- | :--- |
+| **LLM** ✅ | OpenAI `gpt-4o` | Température 0 pour maximiser la précision. Appels asynchrones via `achat()`. |
+| **Embeddings** ✅ | OpenAI `text-embedding-3-small` | Bon compromis performance/coût pour le RAG. |
 
 ---
 
-## 4. Architecture des Données Suggérée (MVP)
+### E. Recherche Web (Science Ouverte)
 
-1.  **Dossier `/data`** : L'utilisateur dépose les PDF ici.
-2.  **Script `ingest.py`** :
-    *   Scan le dossier.
-    *   Utilise *LlamaParse/Docling* pour extraire Texte + Tableaux (Markdown) + Images.
-    *   Envoie les images à un modèle Vision -> Récupère la description textuelle.
-    *   Crée des "Nodes" LlamaIndex avec métadonnées (`page`, `source`, `type`).
-    *   Sauvegarde dans `ChromaDB` local.
-3.  **API `main.py`** :
-    *   Endpoint `/chat` : Reçoit la question -> Query ChromaDB -> Synthèse LLM -> Stream réponse.
+| Option | Verdict |
+| :--- | :--- |
+| **Tavily API** ✅ | API de recherche sémantique, supporte les filtres de domaines (`include_domains`). Deux usages : web général (mode Hybride) et domaines scientifiques filtrés (mode Science). |
+| **Serper / SerpAPI** | Alternative, orientée Google Search. Moins de contrôle sur le filtrage de domaines. |
 
-## 5. Prochaines Étapes Immédiates
+**Choix retenu : Tavily** — `search_depth="advanced"`, `include_domains` configurables via `.env` (`TAVILY_INCLUDE_DOMAINS`), dégradation gracieuse si clé absente.
 
-1.  Initialiser le repo Git.
-2.  Créer l'environnement Python (`uv` ou `venv`).
-3.  Installer `fastapi`, `llamaindex`, `chromadb`.
-4.  Créer le dossier `backend` et `frontend`.
+---
+
+### F. Backend API
+
+| Option | Verdict |
+| :--- | :--- |
+| **FastAPI** ✅ | Support natif async (crucial pour LLM + Tavily en parallèle), validation Pydantic, Swagger auto-généré. |
+| **Flask/Django** | Moins adaptés à l'async et au streaming LLM. |
+
+**Implémenté :** endpoints `/login`, `/logout`, `/chat` (3 modes), `/pdf/{filename}` (serving authentifié). Authentification par token cryptographique in-memory (`secrets.token_urlsafe`).
+
+---
+
+### G. Frontend
+
+| Composant | Choix | Détail |
+| :--- | :--- | :--- |
+| **Framework** ✅ | Next.js 16 (App Router) | SSR désactivé pour les composants avec localStorage (`dynamic` + `ssr: false`). |
+| **UI** ✅ | shadcn/ui + Tailwind CSS v4 | Composants : Button, Input, Card, ScrollArea, Avatar, Badge. |
+| **Markdown** ✅ | react-markdown | Rendu avec composants personnalisés (`h2` → bold, `h3` → semibold). |
+| **PDF** ✅ | react-pdf (pdfjs-dist v5) | Chargement avec `Authorization` header, mémoïsation du `file` prop. |
+| **Auth** ✅ | Token localStorage | Token reçu du backend, envoyé en `Bearer` header sur `/chat` et `/pdf`. |
+
+---
+
+## 3. Architecture de Données
+
+```
+backend/data/          ← PDF sources
+       ↓
+ingest.py              ← LlamaParse → chunks Markdown
+                       ← Métadonnées : file_name, page_label, content_type
+                       ← Embeddings OpenAI text-embedding-3-small
+                       ↓
+backend/chroma_db/     ← Index vectoriel persistant (collection "rag_collection")
+       ↓
+main.py /chat          ← Mode internal : ChromaDB top-K → gpt-4o
+                       ← Mode hybrid  : ChromaDB + Tavily web → gpt-4o (synthèse)
+                       ← Mode science : Tavily (domaines filtrés, query EN) → gpt-4o (bilingue FR/EN)
+```
+
+---
+
+## 4. Décisions de Sécurité
+
+| Point | Décision |
+| :--- | :--- |
+| Credentials | Stockés dans `.env` (non versionnés), jamais dans le code. |
+| Comparaison passwords | `secrets.compare_digest()` — résistant aux timing attacks. |
+| Tokens de session | `secrets.token_urlsafe(32)` — 256 bits d'entropie, invalidés côté serveur au logout. |
+| Serving PDF | Vérification de path traversal (`startswith(data_dir_abs)`), extension `.pdf` imposée. |
+| CORS | `allow_origins=["*"]` acceptable en dev ; à restreindre au domaine frontend en production. |
+
+---
+
+## 5. Points d'Amélioration Identifiés (Phase 3)
+
+- **Tokens persistants** : les tokens actuels sont in-memory (perdus au redémarrage serveur). Migrer vers JWT signé ou Redis pour la production multi-workers.
+- **CORS** : restreindre `allow_origins` au domaine frontend en production.
+- **Description des figures** : intégrer un modèle Vision (GPT-4o Vision ou Gemini Flash) dans `ingest.py` pour générer des descriptions textuelles des images extraites.
+- **Streaming** : implémenter le streaming des réponses LLM pour une meilleure UX sur les réponses longues.
+- **Rate limiting** : protéger les endpoints contre les abus (ex: `slowapi`).

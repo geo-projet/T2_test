@@ -1,104 +1,180 @@
 # Assistant RAG Environnemental Hybride
 
-Ce projet est une plateforme web permettant aux experts en environnement d'interroger en langage naturel une base de connaissances complexe. L'application agit comme un assistant expert capable d'analyser des rapports techniques internes (PDFs riches en tableaux et figures) et de croiser ces informations, sur demande, avec la littérature scientifique ouverte en temps réel.
+Plateforme web permettant à des experts en environnement d'interroger en langage naturel une base de connaissances constituée de rapports PDF techniques internes, avec possibilité de croiser ces données avec la littérature scientifique ouverte en temps réel.
 
-## 🚀 Fonctionnalités Clés
+## Fonctionnalités implémentées
 
-*   **Analyse de Documents Complexes :** Ingestion et parsing avancés de PDF techniques, préservant la structure des tableaux et générant des descriptions textuelles pour les figures.
-*   **Mode Hybride (RAG + Web) :**
-    *   **Interne :** Interrogation d'une base vectorielle locale construite à partir de vos documents.
-    *   **Externe (Agent Web) :** Recherche en temps réel dans la littérature scientifique ouverte.
-*   **Citations Précises :** Chaque réponse inclut des références cliquables vers le document source et la page exacte.
-*   **Interface Expert :** Visualisation des extraits bruts (texte, tableaux) utilisés pour la réponse pour validation des données.
+### Modes de recherche
+| Mode | Description |
+|---|---|
+| **Interne** | RAG sur les PDF internes uniquement. Réponse citant la page et le document source. |
+| **Hybride** | RAG interne + recherche web générale (Tavily). Réponse structurée en deux sections distinctes. |
+| **Science** | Recherche dans la littérature scientifique (domaines filtrés via Tavily). La requête est automatiquement traduite FR→EN. Réponse bilingue : français d'abord, version anglaise originale en dessous. |
 
-## 🛠 Tech Stack
+### Autres fonctionnalités
+- **Authentification** : login sécurisé via credentials stockés côté serveur (`.env`), token d'accès par session
+- **Visionneuse PDF** : ouverture du document source directement à la page citée, avec navigation et zoom
+- **Citations cliquables** : sources internes (PDF) et externes (URL) cliquables depuis la réponse
+- **Anti-hallucination** : prompts système avec règles strictes de citation et d'interdiction d'extrapolation
 
-### Backend
-*   **Langage :** Python
-*   **API Framework :** FastAPI
-*   **Orchestration RAG :** LlamaIndex
-*   **Base de Données Vectorielle :** ChromaDB (Local)
-*   **Parsing PDF :** LlamaParse / Docling
-*   **Modèles :** Compatible avec OpenAI, Anthropic, Gemini, ou modèles locaux via Ollama.
+---
 
-### Frontend
-*   **Framework :** Next.js 15 (App Router)
-*   **Langage :** TypeScript
-*   **UI Components :** shadcn/ui
-*   **Styling :** Tailwind CSS
+## Stack technique
 
-## 📂 Structure du Projet
+### Backend (Python)
+| Composant | Choix |
+|---|---|
+| API | FastAPI |
+| Orchestration RAG | LlamaIndex |
+| Parsing PDF | LlamaParse (API LlamaCloud) |
+| Base vectorielle | ChromaDB (persistant local) |
+| Embeddings | OpenAI `text-embedding-3-small` |
+| LLM | OpenAI `gpt-4o` |
+| Recherche web | Tavily API |
+| Auth | `secrets` Python (token in-memory) |
+
+### Frontend (Next.js)
+| Composant | Choix |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| Langage | TypeScript |
+| UI | shadcn/ui + Tailwind CSS v4 |
+| Markdown | react-markdown |
+| PDF | react-pdf (pdfjs-dist) |
+
+---
+
+## Structure du projet
 
 ```
 .
-├── backend/                # Code source du backend Python
-│   ├── chroma_db/          # Base de données vectorielle persistante
-│   ├── data/               # Dossier pour déposer les PDF à ingérer
-│   ├── ingest.py           # Script d'ingestion et d'indexation des documents
-│   ├── main.py             # Point d'entrée de l'API FastAPI
-│   └── requirements.txt    # Dépendances Python
-├── frontend/               # Code source du frontend Next.js
-│   ├── app/                # Pages et layouts (App Router)
-│   ├── components/         # Composants UI réutilisables
-│   └── lib/                # Utilitaires
-├── PRD.md                  # Document d'Exigences Produit
-└── TECH_STACK_RECOMMENDATION.md # Analyse technique détaillée
+├── backend/
+│   ├── data/               # PDF à ingérer (à créer)
+│   ├── chroma_db/          # Base vectorielle persistante (générée par ingest.py)
+│   ├── main.py             # API FastAPI (endpoints /login, /logout, /chat, /pdf)
+│   ├── ingest.py           # Script d'ingestion et d'indexation des PDF
+│   ├── requirements.txt    # Dépendances Python
+│   └── .env.example        # Variables d'environnement requises
+├── frontend/
+│   ├── app/
+│   │   ├── page.tsx        # Interface de chat principale
+│   │   └── layout.tsx      # Layout global
+│   ├── components/
+│   │   ├── LoginPage.tsx   # Page de connexion
+│   │   ├── PDFViewer.tsx   # Visionneuse PDF avec authentification
+│   │   └── ui/             # Composants shadcn/ui
+│   └── lib/
+├── PRD.md
+├── TECH_STACK_RECOMMENDATION.md
+└── README.md
 ```
 
-## ⚡️ Installation et Démarrage
+---
+
+## Installation et démarrage
 
 ### Prérequis
+- Python 3.10+
+- Node.js 18+
+- Clés API : OpenAI, LlamaCloud, Tavily
 
-*   Node.js (v18+)
-*   Python (v3.10+)
-*   Clés API nécessaires (selon la configuration : OpenAI, Anthropic, Gemini, LlamaCloud, Tavily, etc.) configurées dans un fichier `.env`.
-
-### 1. Configuration du Backend
+### 1. Backend
 
 ```bash
 cd backend
 
-# Créer un environnement virtuel
+# Créer et activer l'environnement virtuel
 python -m venv .venv
 
-# Activer l'environnement virtuel
-# Windows :
+# Windows
 .venv\Scripts\activate
-# Mac/Linux :
+# Mac/Linux
 # source .venv/bin/activate
 
 # Installer les dépendances
 pip install -r requirements.txt
-
-# (Optionnel) Lancer l'ingestion des documents présents dans backend/data
-python ingest.py
-
-# Démarrer le serveur API
-fastapi dev main.py
 ```
-Le serveur backend sera accessible sur `http://localhost:8000`.
 
-### 2. Configuration du Frontend
+Créer le fichier `backend/.env` à partir de `.env.example` :
+
+```env
+OPENAI_API_KEY=sk-...
+LLAMA_CLOUD_API_KEY=llx-...
+TAVILY_API_KEY=tvly-...
+TAVILY_INCLUDE_DOMAINS=nature.com,science.org,pubmed.ncbi.nlm.nih.gov
+
+# Obligatoire — identifiants de connexion à l'application
+AUTH_USERNAME=votre_nom_utilisateur
+AUTH_PASSWORD=votre_mot_de_passe_securise
+
+DATA_DIR=./data
+CHROMA_DB_DIR=./chroma_db
+```
+
+Déposer les PDF dans `backend/data/`, puis indexer :
+
+```bash
+python ingest.py
+```
+
+Lancer l'API :
+
+```bash
+# Développement (rechargement auto)
+fastapi dev main.py
+
+# Production
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+API disponible sur `http://localhost:8000` — documentation Swagger sur `http://localhost:8000/docs`.
+
+### 2. Frontend
 
 ```bash
 cd frontend
-
-# Installer les dépendances
 npm install
+```
 
-# Démarrer le serveur de développement
+Créer `frontend/.env.local` :
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+Lancer le serveur de développement :
+
+```bash
 npm run dev
 ```
-L'application frontend sera accessible sur `http://localhost:3000`.
 
-## 📖 Utilisation
+Application disponible sur `http://localhost:3000`.
 
-1.  Déposez vos documents PDF techniques dans le dossier `backend/data`.
-2.  Exécutez le script `python ingest.py` pour mettre à jour la base de connaissances.
-3.  Lancez les serveurs Backend et Frontend.
-4.  Ouvrez votre navigateur sur `http://localhost:3000`.
-5.  Posez vos questions techniques à l'assistant. Utilisez le sélecteur pour activer la recherche Web si nécessaire.
+---
 
-## 📄 Licence
+## Utilisation
 
-Ce projet est destiné à un usage interne ou éducatif. Veuillez vous référer aux licences des bibliothèques tierces utilisées.
+1. Déposer les PDF techniques dans `backend/data/`
+2. Exécuter `python ingest.py` pour indexer les documents
+3. Lancer le backend (`fastapi dev main.py`) et le frontend (`npm run dev`)
+4. Ouvrir `http://localhost:3000`, se connecter avec les credentials définis dans `.env`
+5. Choisir le mode de recherche et poser une question
+
+---
+
+## Endpoints API
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| `POST` | `/login` | Non | Authentification, retourne un token |
+| `POST` | `/logout` | Oui | Invalide le token de session |
+| `POST` | `/chat` | Oui | Requête RAG (modes : internal, hybrid, science) |
+| `GET` | `/pdf/{filename}` | Oui | Sert un PDF depuis `data/` |
+
+---
+
+## Roadmap
+
+- [x] Phase 1 — MVP : ingestion PDF, RAG interne, citations sources
+- [x] Phase 2 — V1 : mode hybride (interne + web), mode science (littérature filtrée + traduction auto), authentification sécurisée
+- [ ] Phase 3 — V2 : upload de PDF temporaires, historique des sessions, export des réponses

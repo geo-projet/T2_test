@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Lock } from 'lucide-react';
+import { Lock, Loader2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -14,18 +14,35 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+    setIsLoading(true);
 
-    // Vérification des credentials
-    if (username === 't2test' && password === 't2$2026%t2') {
-      // Stocker l'authentification dans localStorage
-      localStorage.setItem('isAuthenticated', 'true');
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (!response.ok) {
+        setError('Identifiants incorrects');
+        setPassword('');
+        return;
+      }
+
+      const data = await response.json();
+      localStorage.setItem('authToken', data.token);
       onLogin();
-    } else {
-      setError('Identifiants incorrects');
+    } catch {
+      setError('Erreur de connexion au serveur');
       setPassword('');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -40,14 +57,14 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           </div>
           <CardTitle className="text-2xl">Connexion</CardTitle>
           <CardDescription>
-            Accès à l'Assistant RAG Environnemental
+            Accès à l&apos;Assistant RAG Environnemental
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <label htmlFor="username" className="text-sm font-medium text-gray-700">
-                Nom d'utilisateur
+                Nom d&apos;utilisateur
               </label>
               <Input
                 id="username"
@@ -86,9 +103,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             )}
             <Button
               type="submit"
+              disabled={isLoading}
               className="w-full bg-green-600 hover:bg-green-700"
             >
-              Se connecter
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Connexion...
+                </>
+              ) : (
+                'Se connecter'
+              )}
             </Button>
           </form>
         </CardContent>

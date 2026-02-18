@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, FileText, Loader2, Image as ImageIcon, Table, Globe, Microscope, LogOut } from 'lucide-react';
+import { Send, Bot, FileText, Loader2, Image as ImageIcon, Table, Globe, Microscope, LogOut, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import dynamic from 'next/dynamic';
 
@@ -43,6 +43,7 @@ interface Message {
 export default function ChatInterface() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [authToken, setAuthToken] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: "Bonjour ! Je suis votre assistant environnemental expert. Posez-moi une question sur vos documents." }
   ]);
@@ -54,15 +55,13 @@ export default function ChatInterface() {
 
   // Vérifier l'authentification au chargement
   useEffect(() => {
-    const authStatus = localStorage.getItem('isAuthenticated');
-    setIsAuthenticated(authStatus === 'true');
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      setAuthToken(token);
+      setIsAuthenticated(true);
+    }
     setIsCheckingAuth(false);
   }, []);
-
-  // Debug: Log when selectedPDF changes
-  useEffect(() => {
-    console.log('selectedPDF state changed:', selectedPDF);
-  }, [selectedPDF]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -86,16 +85,26 @@ export default function ChatInterface() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
         body: JSON.stringify({ query: userMessage, mode: searchMode }),
       });
+
+      if (response.status === 401) {
+        localStorage.removeItem('authToken');
+        setIsAuthenticated(false);
+        setAuthToken('');
+        return;
+      }
 
       if (!response.ok) throw new Error('Erreur réseau');
 
       const data = await response.json();
-      
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
+
+      setMessages(prev => [...prev, {
+        role: 'assistant',
         content: data.answer,
         sources: data.sources
       }]);
@@ -116,15 +125,23 @@ export default function ChatInterface() {
   };
 
   const handleLogin = () => {
+    const token = localStorage.getItem('authToken') || '';
+    setAuthToken(token);
     setIsAuthenticated(true);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('isAuthenticated');
+  const handleLogout = async () => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      await fetch(`${apiUrl}/logout`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+    } catch { /* ignore */ }
+    localStorage.removeItem('authToken');
     setIsAuthenticated(false);
+    setAuthToken('');
   };
-
-  console.log('Rendering component, selectedPDF:', selectedPDF);
 
   // Afficher un loader pendant la vérification de l'authentification
   if (isCheckingAuth) {
@@ -143,14 +160,12 @@ export default function ChatInterface() {
   return (
     <>
       {selectedPDF && (
-        <>
-          {console.log('Rendering PDFViewer with:', selectedPDF)}
-          <PDFViewer
-            fileName={selectedPDF.fileName}
-            pageNumber={selectedPDF.pageNumber}
-            onClose={() => setSelectedPDF(null)}
-          />
-        </>
+        <PDFViewer
+          fileName={selectedPDF.fileName}
+          pageNumber={selectedPDF.pageNumber}
+          onClose={() => setSelectedPDF(null)}
+          token={authToken}
+        />
       )}
 
       <div className="flex h-screen bg-gray-50 p-4 justify-center items-center">
@@ -203,13 +218,24 @@ export default function ChatInterface() {
             </div>
           </div>
         </CardHeader>
-        
+
+        {/* Bandeau d'avertissement mode Science */}
+        {searchMode === 'science' && (
+          <div className="flex items-start gap-2 px-4 py-2 bg-purple-50 border-b border-purple-200 text-xs text-purple-800">
+            <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-purple-600" />
+            <span>
+              <strong>Mode Science :</strong> votre question sera automatiquement traduite en anglais pour la recherche dans la littérature scientifique.
+              La réponse sera affichée en français, suivie de la version originale en anglais.
+            </span>
+          </div>
+        )}
+
         <CardContent className="flex-1 p-0 overflow-hidden bg-white">
           <ScrollArea className="h-full p-4" ref={scrollAreaRef}>
             <div className="space-y-6">
               {messages.map((msg, index) => (
                 <div key={index} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  
+
                   {msg.role === 'assistant' && (
                     <Avatar className="h-8 w-8 border">
                       <AvatarFallback className="bg-green-100 text-green-700">AI</AvatarFallback>
@@ -218,15 +244,24 @@ export default function ChatInterface() {
 
                   <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                     <div className={`p-4 rounded-lg shadow-sm text-sm ${
-                      msg.role === 'user' 
-                        ? 'bg-blue-600 text-white' 
+                      msg.role === 'user'
+                        ? 'bg-blue-600 text-white'
                         : 'bg-gray-100 text-gray-800'
                     }`}>
                       <div className="prose prose-sm dark:prose-invert break-words">
-                      <ReactMarkdown>
-                        {msg.content}
-                      </ReactMarkdown>
-                    </div>
+                        <ReactMarkdown
+                          components={{
+                            h2: ({ children }) => (
+                              <p className="font-bold text-gray-900 mt-3 mb-1">{children}</p>
+                            ),
+                            h3: ({ children }) => (
+                              <p className="font-semibold text-gray-800 mt-2 mb-1">{children}</p>
+                            ),
+                          }}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
+                      </div>
                     </div>
 
                     {/* Sources Section */}
@@ -346,8 +381,8 @@ export default function ChatInterface() {
 
         <CardFooter className="p-4 border-t bg-white rounded-b-xl">
           <div className="flex w-full gap-2">
-            <Input 
-              placeholder="Posez une question sur vos rapports..." 
+            <Input
+              placeholder="Posez une question sur vos rapports..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyPress}
