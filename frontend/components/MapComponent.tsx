@@ -227,7 +227,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors }
           const state = source.getState();
           if (state === 'ready') {
             const extent = source.getExtent();
-            if (!extent.includes(Infinity) && !extent.includes(-Infinity)) {
+            if (extent && !extent.includes(Infinity) && !extent.includes(-Infinity)) {
               currentMap.getView().fit(extent, {
                 padding: MAP_DEFAULTS.FIT_PADDING,
                 maxZoom: MAP_DEFAULTS.MAX_ZOOM
