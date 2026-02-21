@@ -1,7 +1,7 @@
 # Document d'Exigences Produit (PRD) : Assistant RAG Environnemental Hybride
 
 **Dernière mise à jour :** Février 2026
-**État actuel :** Phase 2.5 terminée + amélioration UX Mode Science (affichage traduction)
+**État actuel :** Phase 2.5 terminée + WMS + amélioration UX Mode Science
 
 ---
 
@@ -110,11 +110,20 @@ Développer une plateforme web permettant à des experts en environnement d'inte
    - **Navigation** (défaut) : pan et zoom.
    - **Sélection** : clic sur une entité → affichage de ses attributs dans un panneau flottant.
    - **Dessin ROI** : tracé de rectangles de zone d'intérêt (efface avec bouton dédié).
+   - **WMS** : bouton dans la toolbar ouvrant une interface d'ajout de service WMS externe.
 
 5. **Données GeoJSON :**
    - Servies par deux routes API Next.js internes (`/api/layers`, `/api/layers/data`).
    - Répertoire configurable via variable d'environnement `GEOJSON_PATH`.
    - Sécurité : vérification anti-path-traversal, validation de l'extension de fichier.
+
+6. **Outil WMS (Web Map Service) :**
+   - Bouton dédié dans la toolbar cartographique.
+   - Interface modale : saisie d'une URL WMS (http/https), chargement des couches disponibles via `GetCapabilities`.
+   - Sélection multiple de couches avec nom technique et titre lisible.
+   - Couches ajoutées superposées à la carte en `EPSG:4326`, compatibles avec les couches GeoJSON locales.
+   - Couches WMS actives listées dans la sidebar avec bouton de retrait individuel.
+   - **Proxy CORS** : GetCapabilities et tuiles WMS transitent par des routes API Next.js (`/api/wms-proxy`, `/api/wms-tiles`) pour contourner les restrictions CORS des serveurs externes.
 
 ---
 
@@ -143,6 +152,8 @@ Développer une plateforme web permettant à des experts en environnement d'inte
 - Sidebar de gestion des couches GeoJSON (groupes, checkboxes, couleurs).
 - Fonds de carte OSM et satellite, outils navigation/sélection/dessin.
 - Routes API Next.js pour servir les données GeoJSON depuis le système de fichiers local.
+- Outil WMS : ajout de services externes via GetCapabilities, sélection de couches, superposition EPSG:4326.
+- Proxy CORS Next.js pour GetCapabilities (`/api/wms-proxy`) et tuiles WMS (`/api/wms-tiles`).
 
 ### Phase 3 — V2 (Autonomie & UX) — À VENIR
 
