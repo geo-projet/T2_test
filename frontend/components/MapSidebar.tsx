@@ -7,6 +7,13 @@ interface LayerGroup {
   files: string[];
 }
 
+interface ActiveWmsLayer {
+  id: string;
+  url: string;
+  layerName: string;
+  title: string;
+}
+
 interface MapSidebarProps {
   layers: LayerGroup[];
   activeLayerIds: string[];
@@ -14,6 +21,8 @@ interface MapSidebarProps {
   onToggleLayer: (groupName: string, fileName: string) => void;
   onToggleGroup: (groupName: string) => void;
   onColorChange: (layerId: string, color: string) => void;
+  activeWmsLayers?: ActiveWmsLayer[];
+  onRemoveWmsLayer?: (id: string) => void;
 }
 
 interface GroupCheckboxProps {
@@ -45,7 +54,7 @@ const GroupCheckbox: React.FC<GroupCheckboxProps> = ({ checked, indeterminate, o
   );
 };
 
-const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerColors, onToggleLayer, onToggleGroup, onColorChange }) => {
+const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerColors, onToggleLayer, onToggleGroup, onColorChange, activeWmsLayers, onRemoveWmsLayer }) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const toggleGroupExpand = (groupName: string) => {
@@ -149,6 +158,35 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
                 </div>
               );
             })}
+          </div>
+        )}
+        {/* Section Services WMS */}
+        {activeWmsLayers && activeWmsLayers.length > 0 && (
+          <div className="border-t border-gray-200 mt-3 pt-3">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider px-1 mb-2">Services WMS</p>
+            <div className="space-y-1">
+              {activeWmsLayers.map(layer => (
+                <div
+                  key={layer.id}
+                  className="flex items-center justify-between p-2 rounded bg-blue-50 border border-blue-100"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-blue-700 truncate">{layer.title}</p>
+                    <p className="text-xs text-gray-400 font-mono truncate">{layer.layerName}</p>
+                  </div>
+                  <button
+                    onClick={() => onRemoveWmsLayer?.(layer.id)}
+                    className="ml-2 flex-shrink-0 text-gray-400 hover:text-red-500 transition-colors p-1 rounded hover:bg-red-50"
+                    title="Retirer cette couche WMS"
+                    aria-label={`Retirer ${layer.title}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

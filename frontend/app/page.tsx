@@ -67,6 +67,13 @@ interface ActiveLayer {
   fileName: string;
 }
 
+interface ActiveWmsLayer {
+  id: string;        // `${url}::${layerName}`
+  url: string;
+  layerName: string;
+  title: string;
+}
+
 export default function ChatInterface() {
   // Auth
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -88,6 +95,7 @@ export default function ChatInterface() {
   const [layers, setLayers] = useState<LayerGroup[]>([]);
   const [activeLayers, setActiveLayers] = useState<ActiveLayer[]>([]);
   const [layerColors, setLayerColors] = useState<Record<string, string>>({});
+  const [activeWmsLayers, setActiveWmsLayers] = useState<ActiveWmsLayer[]>([]);
   const layersLoadedRef = useRef(false);
 
   // Vérifier l'authentification au chargement
@@ -148,6 +156,18 @@ export default function ChatInterface() {
 
   const handleColorChange = (layerId: string, color: string) => {
     setLayerColors(prev => ({ ...prev, [layerId]: color }));
+  };
+
+  const handleAddWmsLayers = (newLayers: ActiveWmsLayer[]) => {
+    setActiveWmsLayers(prev => {
+      const existingIds = new Set(prev.map(l => l.id));
+      const toAdd = newLayers.filter(l => !existingIds.has(l.id));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  const handleRemoveWmsLayer = (id: string) => {
+    setActiveWmsLayers(prev => prev.filter(l => l.id !== id));
   };
 
   // Chat handlers
@@ -508,10 +528,14 @@ export default function ChatInterface() {
               onToggleLayer={handleToggleLayer}
               onToggleGroup={handleToggleGroup}
               onColorChange={handleColorChange}
+              activeWmsLayers={activeWmsLayers}
+              onRemoveWmsLayer={handleRemoveWmsLayer}
             />
             <MapComponent
               activeLayers={activeLayers}
               layerColors={layerColors}
+              activeWmsLayers={activeWmsLayers}
+              onAddWmsLayers={handleAddWmsLayers}
             />
           </div>
         )}

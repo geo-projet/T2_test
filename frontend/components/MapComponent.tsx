@@ -7,6 +7,7 @@ import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
 import OSM from 'ol/source/OSM';
 import XYZ from 'ol/source/XYZ';
+import TileWMS from 'ol/source/TileWMS';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
 import GeoJSON from 'ol/format/GeoJSON';
@@ -16,6 +17,7 @@ import { Select, Draw } from 'ol/interaction';
 import { createBox } from 'ol/interaction/Draw';
 import { click } from 'ol/events/condition';
 import ToolButton from './ToolButton';
+import WMSDialog from './WMSDialog';
 
 // Constants
 const MAP_DEFAULTS = {
@@ -41,9 +43,18 @@ interface ActiveLayer {
   fileName: string;
 }
 
+interface ActiveWmsLayer {
+  id: string;
+  url: string;
+  layerName: string;
+  title: string;
+}
+
 interface MapComponentProps {
   activeLayers: ActiveLayer[];
   layerColors: Record<string, string>;
+  activeWmsLayers: ActiveWmsLayer[];
+  onAddWmsLayers: (layers: ActiveWmsLayer[]) => void;
 }
 
 type ToolMode = 'navigate' | 'select' | 'draw';
@@ -68,16 +79,18 @@ const createLayerStyle = (color: string) => {
   });
 };
 
-const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors }) => {
+const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, activeWmsLayers, onAddWmsLayers }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<OlMap | null>(null);
   const vectorLayersRef = useRef<Map<string, VectorLayer<VectorSource>>>(new Map());
+  const wmsLayerRefsRef = useRef<Map<string, TileLayer<TileWMS>>>(new Map());
   const drawSourceRef = useRef<VectorSource>(new VectorSource());
 
   // State
   const [baseLayer, setBaseLayer] = useState<'osm' | 'satellite'>('osm');
   const [toolMode, setToolMode] = useState<ToolMode>('navigate');
   const [selectedFeatureInfo, setSelectedFeatureInfo] = useState<Record<string, unknown> | null>(null);
+  const [wmsDialogOpen, setWmsDialogOpen] = useState(false);
 
   // Initialize Map
   useEffect(() => {
@@ -126,6 +139,8 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors }
         layer.getSource()?.clear();
       });
       vectorLayersRef.current.clear();
+      wmsLayerRefsRef.current.forEach(layer => map.removeLayer(layer));
+      wmsLayerRefsRef.current.clear();
       drawSourceRef.current.clear();
       map.setTarget(undefined);
     };
@@ -249,6 +264,35 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors }
     });
   }, [layerColors]);
 
+  // Handle WMS Layers
+  useEffect(() => {
+    if (!mapInstance.current) return;
+    const map = mapInstance.current;
+    const activeIds = new Set(activeWmsLayers.map(l => l.id));
+
+    wmsLayerRefsRef.current.forEach((layer, id) => {
+      if (!activeIds.has(id)) {
+        map.removeLayer(layer);
+        wmsLayerRefsRef.current.delete(id);
+      }
+    });
+
+    activeWmsLayers.forEach(wmsLayer => {
+      if (!wmsLayerRefsRef.current.has(wmsLayer.id)) {
+        const layer = new TileLayer({
+          source: new TileWMS({
+            url: wmsLayer.url,
+            params: { LAYERS: wmsLayer.layerName, TILED: true, FORMAT: 'image/png' },
+            serverType: 'geoserver',
+            crossOrigin: 'anonymous',
+          }),
+        });
+        map.addLayer(layer);
+        wmsLayerRefsRef.current.set(wmsLayer.id, layer);
+      }
+    });
+  }, [activeWmsLayers]);
+
   const clearDrawings = () => {
     drawSourceRef.current.clear();
   };
@@ -308,6 +352,19 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors }
             </svg>
           </button>
         )}
+
+        {/* WMS Tool — séparateur + bouton d'ajout de service */}
+        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <button
+          onClick={() => setWmsDialogOpen(true)}
+          className="p-2 rounded transition-colors hover:bg-gray-100 text-gray-600"
+          title="Ajouter un service WMS"
+          aria-label="Ouvrir l'outil d'ajout de service WMS"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+          </svg>
+        </button>
       </div>
 
       {/* Attribute Panel */}
@@ -331,6 +388,13 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors }
           </div>
         </div>
       )}
+
+      {/* WMS Dialog */}
+      <WMSDialog
+        open={wmsDialogOpen}
+        onClose={() => setWmsDialogOpen(false)}
+        onAdd={(layers) => { onAddWmsLayers(layers); setWmsDialogOpen(false); }}
+      />
 
       {/* Base Layer Switcher */}
       <div className="absolute top-4 right-4 bg-white p-2 rounded shadow-md z-10 flex flex-col gap-2" role="radiogroup" aria-label="Sélection de la carte de base">
