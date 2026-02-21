@@ -8,6 +8,7 @@ import TileLayer from 'ol/layer/Tile';
 import OSM from 'ol/source/OSM';
 import XYZ from 'ol/source/XYZ';
 import TileWMS from 'ol/source/TileWMS';
+import ImageTile from 'ol/ImageTile';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
 import GeoJSON from 'ol/format/GeoJSON';
@@ -284,7 +285,12 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
             url: wmsLayer.url,
             params: { LAYERS: wmsLayer.layerName, TILED: true, FORMAT: 'image/png' },
             serverType: 'geoserver',
-            crossOrigin: 'anonymous',
+            // Proxy chaque requête de tuile via Next.js pour éviter les blocages CORS
+            tileLoadFunction: (tile, src) => {
+              const proxyUrl = `/api/wms-tiles?url=${encodeURIComponent(src)}`;
+              const img = (tile as ImageTile).getImage() as HTMLImageElement;
+              img.src = proxyUrl;
+            },
           }),
         });
         map.addLayer(layer);
