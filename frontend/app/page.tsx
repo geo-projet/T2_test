@@ -96,6 +96,7 @@ export default function ChatInterface() {
   const [activeLayers, setActiveLayers] = useState<ActiveLayer[]>([]);
   const [layerColors, setLayerColors] = useState<Record<string, string>>({});
   const [activeWmsLayers, setActiveWmsLayers] = useState<ActiveWmsLayer[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
   const layersLoadedRef = useRef(false);
 
   // Vérifier l'authentification au chargement
@@ -168,6 +169,51 @@ export default function ChatInterface() {
 
   const handleRemoveWmsLayer = (id: string) => {
     setActiveWmsLayers(prev => prev.filter(l => l.id !== id));
+  };
+
+  const handleExportGdb = async () => {
+    if (activeLayers.length === 0 || isExporting) return;
+    setIsExporting(true);
+    try {
+      // 1. Charger les données GeoJSON de chaque couche active
+      const layerDataPromises = activeLayers.map(async (layer) => {
+        const res = await fetch(`/api/layers/data?path=${encodeURIComponent(layer.id)}`);
+        if (!res.ok) throw new Error(`Erreur chargement couche ${layer.id}`);
+        const geojson = await res.json();
+        return { id: layer.id, name: layer.fileName, geojson };
+      });
+      const layers = await Promise.all(layerDataPromises);
+
+      // 2. Envoyer au backend pour conversion .gdb
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_URL}/export/gdb`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ layers }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { detail?: string }).detail || 'Export échoué');
+      }
+
+      // 3. Déclencher le téléchargement
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'export_couches.gpkg';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Erreur export GDB:', err);
+      alert(`Erreur lors de l'export : ${err instanceof Error ? err.message : 'Inconnu'}`);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   // Chat handlers
@@ -530,6 +576,8 @@ export default function ChatInterface() {
               onColorChange={handleColorChange}
               activeWmsLayers={activeWmsLayers}
               onRemoveWmsLayer={handleRemoveWmsLayer}
+              onExport={handleExportGdb}
+              isExporting={isExporting}
             />
             <MapComponent
               activeLayers={activeLayers}

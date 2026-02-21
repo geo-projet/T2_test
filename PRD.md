@@ -1,7 +1,7 @@
 # Document d'Exigences Produit (PRD) : Assistant RAG Environnemental Hybride
 
 **Dernière mise à jour :** Février 2026
-**État actuel :** Phase 2.5 terminée + WMS + amélioration UX Mode Science
+**État actuel :** Phase 2.5 terminée + WMS + amélioration UX Mode Science + Export GeoPackage
 
 ---
 
@@ -125,6 +125,17 @@ Développer une plateforme web permettant à des experts en environnement d'inte
    - Couches WMS actives listées dans la sidebar avec bouton de retrait individuel.
    - **Proxy CORS** : GetCapabilities et tuiles WMS transitent par des routes API Next.js (`/api/wms-proxy`, `/api/wms-tiles`) pour contourner les restrictions CORS des serveurs externes.
 
+7. **Export GeoPackage (.gpkg) :**
+   - Bouton "Exporter → .gpkg" fixe en bas de la sidebar cartographique.
+   - Actif uniquement si au moins une couche GeoJSON est cochée ; compteur de couches sélectionnées affiché.
+   - Spinner + désactivation du bouton pendant l'export (état `isExporting`).
+   - Les couches WMS sont **exclues** de l'export (données serveur distantes).
+   - **Backend** : endpoint `POST /export/gdb` (FastAPI, authentifié) — charge les GeoJSON via `/api/layers/data`, construit un GeoPackage multi-couches via `pyogrio` (driver GPKG), retourne le fichier directement.
+   - Chaque couche prend le nom de la sous-couche sélectionnée (sans extension, caractères sanitisés pour la compatibilité OGR).
+   - Couches GeoJSON vides (0 entité) ignorées silencieusement.
+   - **Format GeoPackage** : standard OGC, fichier SQLite unique, supporté nativement par QGIS, ArcGIS Pro, GDAL, PostGIS, FME. Préféré au format ESRI File Geodatabase (.gdb) dont le driver GDAL OpenFileGDB write ne préserve pas les noms de feature classes dans son catalogue interne.
+   - Dépendances backend : `geopandas`, `pyogrio` (importés en lazy pour ne pas crasher le backend si absents).
+
 ---
 
 ## 4. Roadmap de Développement
@@ -154,12 +165,13 @@ Développer une plateforme web permettant à des experts en environnement d'inte
 - Routes API Next.js pour servir les données GeoJSON depuis le système de fichiers local.
 - Outil WMS : ajout de services externes via GetCapabilities, sélection de couches, superposition EPSG:4326.
 - Proxy CORS Next.js pour GetCapabilities (`/api/wms-proxy`) et tuiles WMS (`/api/wms-tiles`).
+- **Export GeoPackage** : bouton sidebar → téléchargement `export_couches.gpkg` multi-couches, noms de couches préservés, authentifié, couches WMS exclues.
 
 ### Phase 3 — V2 (Autonomie & UX) — À VENIR
 
 - **Upload de PDF temporaires :** analyse ad hoc sans réindexation permanente.
 - **Historique des sessions :** sauvegarde et rechargement des conversations.
-- **Export :** téléchargement des réponses en PDF ou Markdown.
+- **Export réponses :** téléchargement des réponses en PDF ou Markdown.
 - **Description des figures :** intégration d'un modèle Vision pour les graphiques.
 - **Lien carte–RAG :** sélection d'une zone sur la carte pour filtrer les documents RAG par emprise spatiale.
 

@@ -3,11 +3,15 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import Response as FastAPIResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 import re
+import io
+import zipfile
+import tempfile
 import secrets
 import chromadb
 import httpx
@@ -118,6 +122,26 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceNode]
     english_query: str | None = None
+
+
+# --- Export models ---
+
+class GeoJSONLayer(BaseModel):
+    id: str          # ex: "Zones/parcelles.geojson"
+    name: str        # ex: "parcelles.geojson"
+    geojson: dict    # FeatureCollection GeoJSON
+
+class ExportRequest(BaseModel):
+    layers: list[GeoJSONLayer]
+
+
+def _sanitize_gdb_name(name: str, index: int) -> str:
+    """Transforme un nom de fichier en nom de feature class GDB valide (max 64 chars, alnum+_, commence par lettre)."""
+    name = name.replace('.geojson', '').replace('.json', '')
+    name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    if not name or name[0].isdigit():
+        name = f"layer_{name}"
+    return name[:60] or f"layer_{index}"
 
 
 # --- Auth endpoints ---
@@ -434,3 +458,65 @@ def get_pdf(filename: str, token: str = Depends(verify_token)):
         media_type="application/pdf",
         filename=filename
     )
+
+
+@app.post("/export/gdb")
+async def export_gdb(request: ExportRequest, token: str = Depends(verify_token)):
+    """Convertit les couches GeoJSON sélectionnées en File Geodatabase zippé."""
+    try:
+        import geopandas as gpd          # lazy import — évite de crasher le backend si non installé
+        from pyogrio import write_dataframe as pyogrio_write
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="geopandas/pyogrio non installé sur le serveur. Exécutez : pip install geopandas pyogrio"
+        )
+
+    if not request.layers:
+        raise HTTPException(status_code=400, detail="Aucune couche fournie")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        gpkg_path = os.path.join(tmpdir, "export.gpkg")
+        used_names: set[str] = set()
+        layers_written = 0
+
+        for i, layer in enumerate(request.layers):
+            features = layer.geojson.get("features", [])
+            if not features:
+                continue  # couche vide ignorée
+
+            gdf = gpd.GeoDataFrame.from_features(features, crs="EPSG:4326")
+            if gdf.empty or gdf.geometry.isna().all():
+                continue
+
+            # Nom unique pour la couche
+            base_name = _sanitize_gdb_name(layer.name, i)
+            fc_name = base_name
+            suffix = 1
+            while fc_name in used_names:
+                fc_name = f"{base_name}_{suffix}"
+                suffix += 1
+            used_names.add(fc_name)
+
+            # GeoPackage : pyogrio respecte parfaitement layer= pour le nommage
+            # append=False (1re couche) → crée le GPKG ; append=True (suivantes) → ajoute une couche
+            pyogrio_write(
+                gdf,
+                gpkg_path,
+                layer=fc_name,
+                driver="GPKG",
+                append=(layers_written > 0),
+            )
+            layers_written += 1
+
+        if layers_written == 0 or not os.path.exists(gpkg_path):
+            raise HTTPException(status_code=422, detail="Aucune couche valide à exporter")
+
+        with open(gpkg_path, "rb") as f:
+            content = f.read()
+
+        return FastAPIResponse(
+            content=content,
+            media_type="application/geopackage+sqlite3",
+            headers={"Content-Disposition": "attachment; filename=export_couches.gpkg"},
+        )

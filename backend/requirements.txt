@@ -9,3 +9,5 @@ nest_asyncio
 openai
 pypdf
 httpx
+geopandas
+pyogrio
