@@ -1,7 +1,7 @@
 # Document d'Exigences Produit (PRD) : Assistant RAG Environnemental Hybride
 
 **Dernière mise à jour :** Février 2026
-**État actuel :** Phase 2.5 terminée (RAG hybride + cartographie intégrée)
+**État actuel :** Phase 2.5 terminée + amélioration UX Mode Science (affichage traduction)
 
 ---
 
@@ -53,6 +53,8 @@ Développer une plateforme web permettant à des experts en environnement d'inte
 
 2. **Traduction automatique (Mode Science) :**
    - La requête française est traduite en anglais par le LLM avant l'appel Tavily.
+   - La traduction anglaise est affichée sous la bulle de message de l'utilisateur dans le chat (texte gris italique avec icône globe).
+   - Si la requête est déjà rédigée en anglais, aucune traduction n'est affichée.
    - La réponse est générée en français (section principale) puis en anglais (section secondaire en blockquote markdown).
 
 3. **Synthèse Comparative (Mode Hybride) :**
@@ -71,14 +73,19 @@ Développer une plateforme web permettant à des experts en environnement d'inte
 
 3. **Bandeau d'information :** Avertissement automatique en mode Science (traduction + réponse bilingue).
 
-4. **Citations Cliquables :**
+4. **Affichage de la traduction (Mode Science) :**
+   - La traduction anglaise de la requête apparaît sous la bulle bleue de l'utilisateur.
+   - Affiché uniquement si la requête originale était en français (détection par comparaison normalisée).
+   - Style : texte `xs` gris italique, aligné à droite, avec icône globe.
+
+5. **Citations Cliquables :**
    - Source interne → ouvre la visionneuse PDF directement à la page citée.
    - Source externe → ouvre l'URL dans un nouvel onglet.
 
-5. **Visionneuse PDF intégrée :**
+6. **Visionneuse PDF intégrée :**
    - Navigation par page, zoom, chargement authentifié (Authorization header).
 
-6. **Affichage des sources :** Badges type (Interne/Externe, Texte/Tableau), score de pertinence, extrait du chunk.
+7. **Affichage des sources :** Badges type (Interne/Externe, Texte/Tableau), score de pertinence, extrait du chunk.
 
 ---
 
@@ -127,6 +134,7 @@ Développer une plateforme web permettant à des experts en environnement d'inte
 - Mode Science : filtrage sur domaines scientifiques, traduction automatique FR→EN, réponse bilingue.
 - Bandeau d'avertissement mode Science dans l'UI.
 - Appels LLM entièrement asynchrones (`achat`).
+- Affichage de la traduction anglaise sous la bulle de l'utilisateur en Mode Science (si requête en français).
 
 ### ✅ Phase 2.5 — Cartographie (Visualisation Géospatiale) — TERMINÉ
 

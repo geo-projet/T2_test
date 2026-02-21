@@ -7,6 +7,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
+import re
 import secrets
 import chromadb
 import httpx
@@ -50,6 +51,10 @@ security = HTTPBearer()
 
 # Global Index Variable
 index = None
+
+def _normalize_for_lang_comparison(text: str) -> str:
+    """Retire la ponctuation et met en minuscule pour comparaison langue-neutre."""
+    return re.sub(r'[^\w\s]', '', text.strip().lower())
 
 def get_index():
     global index
@@ -112,6 +117,7 @@ class SourceNode(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceNode]
+    english_query: str | None = None
 
 
 # --- Auth endpoints ---
@@ -393,8 +399,14 @@ RESPONSE FORMAT — follow this structure strictly:
         else:
             answer = "Aucun article scientifique trouvé pour cette requête dans les revues indexées."
 
-        logger.info(f"Science response - query EN: '{english_query}', sources: {len(external_sources)}")
-        return QueryResponse(answer=answer, sources=external_sources)
+        # Retourner la traduction seulement si la requête était en français
+        returned_english_query = (
+            english_query
+            if _normalize_for_lang_comparison(request.query) != _normalize_for_lang_comparison(english_query)
+            else None
+        )
+        logger.info(f"Science response - query EN: '{english_query}', sources: {len(external_sources)}, translated: {returned_english_query is not None}")
+        return QueryResponse(answer=answer, sources=external_sources, english_query=returned_english_query)
 
     else:
         raise HTTPException(status_code=400, detail=f"Mode invalide: {request.mode}. Modes disponibles: internal, hybrid, science")

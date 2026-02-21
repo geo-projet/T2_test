@@ -53,6 +53,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   sources?: Source[];
+  translationEn?: string;
 }
 
 interface LayerGroup {
@@ -180,11 +181,18 @@ export default function ChatInterface() {
 
       const data = await response.json();
 
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: data.answer,
-        sources: data.sources
-      }]);
+      setMessages(prev => {
+        const updated = [...prev];
+        if (data.english_query) {
+          const targetIdx = updated.findLastIndex(
+            m => m.role === 'user' && m.content === userMessage
+          );
+          if (targetIdx !== -1) {
+            updated[targetIdx] = { ...updated[targetIdx], translationEn: data.english_query };
+          }
+        }
+        return [...updated, { role: 'assistant', content: data.answer, sources: data.sources }];
+      });
 
     } catch (error) {
       console.error(error);
@@ -360,6 +368,16 @@ export default function ChatInterface() {
                           </ReactMarkdown>
                         </div>
                       </div>
+
+                      {/* Translation display (Mode Science, français → anglais) */}
+                      {msg.role === 'user' && msg.translationEn && (
+                        <div className="flex items-center justify-end gap-1 mt-1 pr-1">
+                          <Globe className="h-3 w-3 text-gray-400" />
+                          <p className="text-xs text-gray-400 italic">
+                            {msg.translationEn}
+                          </p>
+                        </div>
+                      )}
 
                       {/* Sources Section */}
                       {msg.sources && msg.sources.length > 0 && (
