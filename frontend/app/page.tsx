@@ -54,6 +54,12 @@ interface Message {
   content: string;
   sources?: Source[];
   translationEn?: string;
+  spatialFilterActive?: boolean;
+}
+
+interface RoiFilter {
+  bbox: [number, number, number, number];
+  matchedLayerIds: string[];
 }
 
 interface LayerGroup {
@@ -73,6 +79,19 @@ interface ActiveWmsLayer {
   layerName: string;
   title: string;
 }
+
+/** Extrait le nom de groupe (= nom du PDF) depuis un ID de couche.
+ *  Ex: "Zone_A/parcelles.geojson" → "Zone_A"
+ */
+const extractGroupName = (layerId: string): string => layerId.split('/')[0];
+
+/** Extrait le nom de la sous-couche (mot-clé suggéré) depuis un ID de couche.
+ *  Ex: "Zone_A/parcelles.geojson" → "parcelles"
+ */
+const extractSubLayerKeyword = (layerId: string): string => {
+  const fileName = layerId.split('/').pop() ?? layerId;
+  return fileName.replace(/\.[^.]+$/, '');
+};
 
 export default function ChatInterface() {
   // Auth
@@ -97,6 +116,7 @@ export default function ChatInterface() {
   const [layerColors, setLayerColors] = useState<Record<string, string>>({});
   const [activeWmsLayers, setActiveWmsLayers] = useState<ActiveWmsLayer[]>([]);
   const [isExporting, setIsExporting] = useState(false);
+  const [roiFilter, setRoiFilter] = useState<RoiFilter | null>(null);
   const layersLoadedRef = useRef(false);
 
   // Vérifier l'authentification au chargement
@@ -171,6 +191,13 @@ export default function ChatInterface() {
     setActiveWmsLayers(prev => prev.filter(l => l.id !== id));
   };
 
+  const handleRoiChange = (
+    bbox: [number, number, number, number] | null,
+    matchedLayerIds: string[]
+  ) => {
+    setRoiFilter(bbox !== null ? { bbox, matchedLayerIds } : null);
+  };
+
   const handleExportGdb = async () => {
     if (activeLayers.length === 0 || isExporting) return;
     setIsExporting(true);
@@ -233,7 +260,14 @@ export default function ChatInterface() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ query: userMessage, mode: searchMode }),
+        body: JSON.stringify({
+          query: userMessage,
+          mode: searchMode,
+          document_filter:
+            roiFilter && roiFilter.matchedLayerIds.length > 0
+              ? [...new Set(roiFilter.matchedLayerIds.map(extractGroupName))]
+              : null,
+        }),
       });
 
       if (response.status === 401) {
@@ -257,7 +291,12 @@ export default function ChatInterface() {
             updated[targetIdx] = { ...updated[targetIdx], translationEn: data.english_query };
           }
         }
-        return [...updated, { role: 'assistant', content: data.answer, sources: data.sources }];
+        return [...updated, {
+          role: 'assistant',
+          content: data.answer,
+          sources: data.sources,
+          spatialFilterActive: data.spatial_filter_active ?? false,
+        }];
       });
 
     } catch (error) {
@@ -371,7 +410,7 @@ export default function ChatInterface() {
                 <Button
                   variant={showMap ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setShowMap(v => !v)}
+                  onClick={() => setShowMap(v => { if (v) setRoiFilter(null); return !v; })}
                   className={showMap ? 'bg-emerald-700 hover:bg-emerald-800' : ''}
                   title={showMap ? 'Fermer la carte' : 'Ouvrir la carte'}
                 >
@@ -398,6 +437,44 @@ export default function ChatInterface() {
                 <strong>Mode Science :</strong> votre question sera automatiquement traduite en anglais pour la recherche dans la littérature scientifique.
                 La réponse sera affichée en français, suivie de la version originale en anglais.
               </span>
+            </div>
+          )}
+
+          {/* Bandeau filtre spatial ROI */}
+          {roiFilter !== null && (
+            <div className={`flex items-center gap-2 px-4 py-2 border-b text-xs ${
+              roiFilter.matchedLayerIds.length === 0
+                ? 'bg-orange-50 border-orange-200 text-orange-700'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            }`}>
+              {roiFilter.matchedLayerIds.length === 0 ? (
+                <>
+                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span>
+                    <strong>Filtre spatial actif</strong> — aucune couche dans la zone dessinée.
+                    La recherche ne sera pas filtrée géographiquement.
+                  </span>
+                </>
+              ) : (() => {
+                const groups = [...new Set(roiFilter.matchedLayerIds.map(extractGroupName))];
+                const keywords = roiFilter.matchedLayerIds.map(extractSubLayerKeyword);
+                return (
+                  <>
+                    <Map className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                    <div className="flex flex-col gap-0.5">
+                      <span>
+                        <strong>Filtre spatial actif</strong> — Document{groups.length > 1 ? 's' : ''} :{' '}
+                        {groups.join(', ')}
+                      </span>
+                      {keywords.length > 0 && (
+                        <span className="italic text-emerald-600">
+                          Mots-clés suggérés : {keywords.join(', ')}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
@@ -448,6 +525,12 @@ export default function ChatInterface() {
                       {/* Sources Section */}
                       {msg.sources && msg.sources.length > 0 && (
                         <div className="mt-2 space-y-2 w-full">
+                          {msg.spatialFilterActive && (
+                            <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                              <Map className="h-3 w-3 flex-shrink-0" />
+                              <span>Résultats filtrés géographiquement selon la zone dessinée sur la carte.</span>
+                            </div>
+                          )}
                           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Sources Consultées</p>
                           <div className="grid grid-cols-1 gap-2">
                             {msg.sources.map((src, idx) => {
@@ -584,6 +667,7 @@ export default function ChatInterface() {
               layerColors={layerColors}
               activeWmsLayers={activeWmsLayers}
               onAddWmsLayers={handleAddWmsLayers}
+              onRoiChange={handleRoiChange}
             />
           </div>
         )}

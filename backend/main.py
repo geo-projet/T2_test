@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 import re
+from pathlib import Path
 import io
 import zipfile
 import tempfile
@@ -105,6 +106,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
 class QueryRequest(BaseModel):
     query: str
     mode: str = "internal"  # "internal" | "hybrid" | "science"
+    document_filter: list[str] | None = None  # Stems PDF pour filtre spatial (ex: ["Zone_A", "Zone_B"])
 
 class SourceNode(BaseModel):
     text: str
@@ -122,6 +124,7 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceNode]
     english_query: str | None = None
+    spatial_filter_active: bool = False
 
 
 # --- Export models ---
@@ -133,6 +136,47 @@ class GeoJSONLayer(BaseModel):
 
 class ExportRequest(BaseModel):
     layers: list[GeoJSONLayer]
+
+
+def filter_nodes_by_document_stems(
+    nodes: list,
+    document_filter: list[str] | None,
+) -> tuple[list, bool]:
+    """
+    Filtre les nœuds ChromaDB par stems de fichiers PDF correspondant
+    aux couches GeoJSON intersectant la ROI dessinée.
+
+    Convention de correspondance :
+        Path(file_name).stem.lower() ∈ {s.lower() for s in document_filter}
+
+    Fallback silencieux : si le filtre éliminerait TOUS les nœuds, retourne
+    tous les nœuds avec filter_active=False pour garantir une réponse utile.
+
+    Returns:
+        (filtered_nodes, filter_active)
+    """
+    if not document_filter:
+        return nodes, False
+
+    # Correspondance partielle : le nom du groupe doit être CONTENU dans le stem du fichier PDF.
+    # Ex: groupe "Zone_A" → correspond à "rapport_env_Zone_A_2024.pdf"
+    lower_groups = [s.lower() for s in document_filter]
+    filtered = [
+        node for node in nodes
+        if any(
+            group in Path(str(node.node.metadata.get("file_name", ""))).stem.lower()
+            for group in lower_groups
+        )
+    ]
+
+    if not filtered:
+        logger.warning(
+            f"Filtre spatial : aucun nœud dont le stem contient {lower_groups}. "
+            "Fallback vers résultats non filtrés."
+        )
+        return nodes, False
+
+    return filtered, True
 
 
 def _sanitize_gdb_name(name: str, index: int) -> str:
@@ -309,39 +353,91 @@ async def chat_endpoint(request: QueryRequest, token: str = Depends(verify_token
     logger.info(f"Chat request - Mode: {request.mode}, Query: {request.query}")
 
     if request.mode == "internal":
-        # Logique existante (inchangée)
         index = get_index()
         if not index:
             raise HTTPException(status_code=500, detail="Search index not initialized. Run ingestion first.")
 
-        query_engine = index.as_query_engine(similarity_top_k=5)
-        response = query_engine.query(request.query)
+        if not request.document_filter:
+            # Chemin existant : pas de filtre spatial
+            query_engine = index.as_query_engine(similarity_top_k=5)
+            response = query_engine.query(request.query)
 
-        sources = []
-        for node in response.source_nodes:
-            metadata = node.node.metadata or {}
-            sources.append(SourceNode(
-                text=node.node.get_content()[:500] + "...",
-                score=node.score or 0.0,
-                page_label=str(metadata.get("page_label", "N/A")),
-                file_name=str(metadata.get("file_name", "N/A")),
-                content_type=str(metadata.get("content_type", "text")),
-                source_type="internal"
-            ))
+            sources = []
+            for node in response.source_nodes:
+                metadata = node.node.metadata or {}
+                sources.append(SourceNode(
+                    text=node.node.get_content()[:500] + "...",
+                    score=node.score or 0.0,
+                    page_label=str(metadata.get("page_label", "N/A")),
+                    file_name=str(metadata.get("file_name", "N/A")),
+                    content_type=str(metadata.get("content_type", "text")),
+                    source_type="internal"
+                ))
 
-        return QueryResponse(answer=str(response), sources=sources)
+            return QueryResponse(answer=str(response), sources=sources)
+
+        else:
+            # Chemin filtré spatialement : retrieval séparé puis filtre puis synthèse LLM
+            retriever = index.as_retriever(similarity_top_k=5)
+            raw_nodes = retriever.retrieve(request.query)
+            filtered_nodes, filter_active = filter_nodes_by_document_stems(raw_nodes, request.document_filter)
+
+            sources = []
+            for node in filtered_nodes:
+                metadata = node.node.metadata or {}
+                sources.append(SourceNode(
+                    text=node.node.get_content()[:500] + "...",
+                    score=node.score or 0.0,
+                    page_label=str(metadata.get("page_label", "N/A")),
+                    file_name=str(metadata.get("file_name", "N/A")),
+                    content_type=str(metadata.get("content_type", "text")),
+                    source_type="internal"
+                ))
+
+            context_text = "\n\n".join(
+                f"[{i+1}] {n.node.get_content()[:800]}"
+                for i, n in enumerate(filtered_nodes)
+            )
+            spatial_note = (
+                "\n\nNote : La recherche a été filtrée géographiquement — seuls les documents "
+                "correspondant à la zone sélectionnée sur la carte ont été consultés."
+                if filter_active else ""
+            )
+            system_prompt = (
+                "Tu es un assistant expert en environnement. Réponds à la question de l'utilisateur "
+                "en te basant UNIQUEMENT sur les documents fournis. Cite les sources avec [n]. "
+                "Si les documents ne contiennent pas l'information, dis-le explicitement. "
+                "Ne jamais inventer ni extrapoler au-delà des données fournies. Réponds en français."
+                + spatial_note
+            )
+            messages_llm = [
+                ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=f"Question : {request.query}\n\nContexte :\n{context_text}"
+                ),
+            ]
+            llm_response = await Settings.llm.achat(messages_llm)
+            return QueryResponse(
+                answer=str(llm_response.message.content),
+                sources=sources,
+                spatial_filter_active=filter_active,
+            )
 
     elif request.mode == "hybrid":
         # Mode Hybride: Interne + Web complet (SANS filtres de domaines)
         internal_sources = []
         external_sources = []
+        filter_active = False
 
         # Requête interne
         index = get_index()
         if index:
             query_engine = index.as_query_engine(similarity_top_k=3)
             response_internal = query_engine.query(request.query)
-            for node in response_internal.source_nodes:
+            raw_nodes = response_internal.source_nodes
+            filtered_internal, filter_active = filter_nodes_by_document_stems(raw_nodes, request.document_filter)
+            for node in filtered_internal:
                 metadata = node.node.metadata or {}
                 internal_sources.append(SourceNode(
                     text=node.node.get_content()[:500] + "...",
@@ -364,7 +460,7 @@ async def chat_endpoint(request: QueryRequest, token: str = Depends(verify_token
 
         all_sources = internal_sources + external_sources
         logger.info(f"Hybrid response - Internal: {len(internal_sources)}, External (web): {len(external_sources)}")
-        return QueryResponse(answer=answer, sources=all_sources)
+        return QueryResponse(answer=answer, sources=all_sources, spatial_filter_active=filter_active)
 
     elif request.mode == "science":
         # Mode Science: Revues scientifiques UNIQUEMENT (AVEC filtres de domaines)

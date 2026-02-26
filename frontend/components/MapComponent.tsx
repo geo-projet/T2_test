@@ -16,6 +16,8 @@ import { defaults as defaultControls } from 'ol/control';
 import { Style, Stroke, Fill, Circle as CircleStyle } from 'ol/style';
 import { Select, Draw } from 'ol/interaction';
 import { createBox } from 'ol/interaction/Draw';
+import type { DrawEvent } from 'ol/interaction/Draw';
+import { intersects as extentIntersects } from 'ol/extent';
 import { click } from 'ol/events/condition';
 import ToolButton from './ToolButton';
 import WMSDialog from './WMSDialog';
@@ -56,6 +58,7 @@ interface MapComponentProps {
   layerColors: Record<string, string>;
   activeWmsLayers: ActiveWmsLayer[];
   onAddWmsLayers: (layers: ActiveWmsLayer[]) => void;
+  onRoiChange?: (bbox: [number, number, number, number] | null, matchedLayerIds: string[]) => void;
 }
 
 type ToolMode = 'navigate' | 'select' | 'draw';
@@ -80,7 +83,7 @@ const createLayerStyle = (color: string) => {
   });
 };
 
-const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, activeWmsLayers, onAddWmsLayers }) => {
+const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, activeWmsLayers, onAddWmsLayers, onRoiChange }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<OlMap | null>(null);
   const vectorLayersRef = useRef<Map<string, VectorLayer<VectorSource>>>(new Map());
@@ -190,6 +193,28 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
         type: 'Circle',
         geometryFunction: createBox(),
       });
+
+      drawInteraction.on('drawend', (evt: DrawEvent) => {
+        const geom = evt.feature.getGeometry();
+        if (!geom) return;
+        const drawnExtent = geom.getExtent();
+
+        const matched: string[] = [];
+        vectorLayersRef.current.forEach((layer, layerId) => {
+          const source = layer.getSource();
+          if (!source) return;
+          const layerExtent = source.getExtent();
+          // getExtent() retourne [Infinity...] quand la source est vide ou en cours de chargement
+          if (layerExtent && !layerExtent.includes(Infinity) && !layerExtent.includes(-Infinity)) {
+            if (extentIntersects(drawnExtent, layerExtent)) {
+              matched.push(layerId);
+            }
+          }
+        });
+
+        onRoiChange?.(drawnExtent as [number, number, number, number], matched);
+      });
+
       map.addInteraction(drawInteraction);
     } else {
       setSelectedFeatureInfo(null);
@@ -301,6 +326,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
 
   const clearDrawings = () => {
     drawSourceRef.current.clear();
+    onRoiChange?.(null, []);
   };
 
   return (
