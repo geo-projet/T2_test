@@ -1,7 +1,7 @@
 # Document d'Exigences Produit (PRD) : Assistant RAG Environnemental Hybride
 
 **Dernière mise à jour :** Février 2026
-**État actuel :** Phase 2.5 terminée + WMS + amélioration UX Mode Science + Export GeoPackage
+**État actuel :** Phase 3 terminée — Filtre Spatial (Lien carte–RAG)
 
 ---
 
@@ -136,6 +136,19 @@ Développer une plateforme web permettant à des experts en environnement d'inte
    - **Format GeoPackage** : standard OGC, fichier SQLite unique, supporté nativement par QGIS, ArcGIS Pro, GDAL, PostGIS, FME. Préféré au format ESRI File Geodatabase (.gdb) dont le driver GDAL OpenFileGDB write ne préserve pas les noms de feature classes dans son catalogue interne.
    - Dépendances backend : `geopandas`, `pyogrio` (importés en lazy pour ne pas crasher le backend si absents).
 
+8. **Filtre Spatial (Lien carte–RAG) :**
+   - L'outil ROI (dessin rectangle) détecte les couches GeoJSON dont les entités intersectent la zone dessinée.
+   - Convention de nommage : `Zone_A.geojson` ↔ `Zone_A.pdf` — correspondance automatique par stem de fichier.
+   - Flux complet : dessin ROI → `matchedLayerIds` → `extractPdfStem()` → `document_filter: string[]` envoyé au backend avec chaque requête `/chat`.
+   - **Backend** : `filter_nodes_by_document_stems()` filtre les nœuds ChromaDB après retrieval (correspondance partielle : le stem du groupe doit être contenu dans le stem du PDF).
+   - **Mode interne filtré** : retriever séparé (top-5) → filtre → synthèse LLM directe via `achat()` avec contexte filtré.
+   - **Mode hybride filtré** : filtre appliqué sur `source_nodes` du query engine interne avant la synthèse comparative.
+   - **Mode Science** : `document_filter` ignoré (Tavily uniquement, pas de ChromaDB).
+   - **Fallback silencieux** : si le filtre éliminerait tous les nœuds, le système retourne les résultats non filtrés (pas d'erreur).
+   - **UI** : badge indicateur sous les boutons de mode — vert (couches trouvées dans la ROI) / orange (aucune couche intersectante).
+   - `spatial_filter_active: bool` dans `QueryResponse` → note émeraude dans le panneau sources indiquant que la réponse est géographiquement filtrée.
+   - `roiFilter` réinitialisé à la fermeture du panneau carte.
+
 ---
 
 ## 4. Roadmap de Développement
@@ -167,13 +180,23 @@ Développer une plateforme web permettant à des experts en environnement d'inte
 - Proxy CORS Next.js pour GetCapabilities (`/api/wms-proxy`) et tuiles WMS (`/api/wms-tiles`).
 - **Export GeoPackage** : bouton sidebar → téléchargement `export_couches.gpkg` multi-couches, noms de couches préservés, authentifié, couches WMS exclues.
 
-### Phase 3 — V2 (Autonomie & UX) — À VENIR
+### ✅ Phase 3 — Lien carte–RAG (Filtre Spatial) — TERMINÉ
+
+- Outil ROI expose la bbox et les couches intersectantes au parent via `onRoiChange`.
+- Convention de nommage automatique stem GeoJSON ↔ stem PDF.
+- `document_filter` transmis au backend dans chaque requête `/chat`.
+- `filter_nodes_by_document_stems()` backend : filtre ChromaDB avec fallback silencieux.
+- Mode interne : chemin filtré (retrieval + filtre + LLM direct) et chemin non filtré coexistent.
+- Mode hybride : filtre sur les nœuds internes avant synthèse comparative.
+- Badge indicateur vert/orange dans l'UI ; note émeraude dans le panneau sources.
+- `spatial_filter_active` dans `QueryResponse` et `spatialFilterActive` dans `Message`.
+
+### Phase 4 — V2 (Autonomie & UX) — À VENIR
 
 - **Upload de PDF temporaires :** analyse ad hoc sans réindexation permanente.
 - **Historique des sessions :** sauvegarde et rechargement des conversations.
 - **Export réponses :** téléchargement des réponses en PDF ou Markdown.
 - **Description des figures :** intégration d'un modèle Vision pour les graphiques.
-- **Lien carte–RAG :** sélection d'une zone sur la carte pour filtrer les documents RAG par emprise spatiale.
 
 ### Hors-Périmètre (Actuel)
 
