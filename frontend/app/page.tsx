@@ -60,6 +60,7 @@ interface Message {
 interface RoiFilter {
   bbox: [number, number, number, number];
   matchedLayerIds: string[];
+  adminKeywords: string[];
 }
 
 interface LayerGroup {
@@ -71,7 +72,22 @@ interface ActiveLayer {
   id: string;
   groupName: string;
   fileName: string;
+  url?: string;
 }
+
+interface AdminGroup {
+  groupName: string;
+  layers: { id: string; fileName: string; url: string }[];
+}
+
+const ADMIN_LAYERS: AdminGroup = {
+  groupName: 'Administrative',
+  layers: [
+    { id: '__admin__/municipalite.geojson', fileName: 'municipalite.geojson', url: '/municipalite.geojson' },
+  ],
+};
+
+const ADMIN_COLOR = '#6b7280';
 
 interface ActiveWmsLayer {
   id: string;        // `${url}::${layerName}`
@@ -114,6 +130,20 @@ export default function ChatInterface() {
   const [layers, setLayers] = useState<LayerGroup[]>([]);
   const [activeLayers, setActiveLayers] = useState<ActiveLayer[]>([]);
   const [layerColors, setLayerColors] = useState<Record<string, string>>({});
+  const [layerOpacities, setLayerOpacities] = useState<Record<string, number>>({});
+
+  // Palette de couleurs distinctes pour les couches GeoJSON
+  const LAYER_PALETTE = [
+    '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4',
+    '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990',
+    '#dcbeff', '#9A6324',
+  ];
+
+  const getNextColor = (current: Record<string, string>) => {
+    const used = new Set(Object.values(current));
+    return LAYER_PALETTE.find(c => !used.has(c))
+      ?? LAYER_PALETTE[Object.keys(current).length % LAYER_PALETTE.length];
+  };
   const [activeWmsLayers, setActiveWmsLayers] = useState<ActiveWmsLayer[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [roiFilter, setRoiFilter] = useState<RoiFilter | null>(null);
@@ -158,6 +188,13 @@ export default function ChatInterface() {
       if (exists) return prev.filter(l => l.id !== id);
       return [...prev, { id, groupName, fileName }];
     });
+    // Assigner une couleur automatique si absente
+    if (!layerColors[id]) {
+      setLayerColors(prev => {
+        if (prev[id]) return prev;
+        return { ...prev, [id]: getNextColor(prev) };
+      });
+    }
   };
 
   const handleToggleGroup = (groupName: string) => {
@@ -172,11 +209,25 @@ export default function ChatInterface() {
         .filter(f => !activeLayers.find(l => l.id === `${groupName}/${f}`))
         .map(f => ({ id: `${groupName}/${f}`, groupName, fileName: f }));
       setActiveLayers(prev => [...prev, ...toAdd]);
+      // Assigner des couleurs automatiques aux nouvelles couches
+      setLayerColors(prev => {
+        const updated = { ...prev };
+        for (const layer of toAdd) {
+          if (!updated[layer.id]) {
+            updated[layer.id] = getNextColor(updated);
+          }
+        }
+        return updated;
+      });
     }
   };
 
   const handleColorChange = (layerId: string, color: string) => {
     setLayerColors(prev => ({ ...prev, [layerId]: color }));
+  };
+
+  const handleOpacityChange = (layerId: string, opacity: number) => {
+    setLayerOpacities(prev => ({ ...prev, [layerId]: opacity }));
   };
 
   const handleAddWmsLayers = (newLayers: ActiveWmsLayer[]) => {
@@ -191,19 +242,45 @@ export default function ChatInterface() {
     setActiveWmsLayers(prev => prev.filter(l => l.id !== id));
   };
 
+  const handleInitialOpacity = (layerId: string, opacity: number) => {
+    setLayerOpacities(prev => {
+      if (prev[layerId] !== undefined) return prev;
+      return { ...prev, [layerId]: opacity };
+    });
+  };
+
+  const handleToggleAdminLayer = (layerId: string, fileName: string, url: string) => {
+    setActiveLayers(prev => {
+      const exists = prev.find(l => l.id === layerId);
+      if (exists) return prev.filter(l => l.id !== layerId);
+      return [...prev, { id: layerId, groupName: ADMIN_LAYERS.groupName, fileName, url }];
+    });
+    if (!layerColors[layerId]) {
+      setLayerColors(prev => prev[layerId] ? prev : { ...prev, [layerId]: ADMIN_COLOR });
+    }
+  };
+
   const handleRoiChange = (
     bbox: [number, number, number, number] | null,
-    matchedLayerIds: string[]
+    matchedLayerIds: string[],
+    adminKeywords?: string[]
   ) => {
-    setRoiFilter(bbox !== null ? { bbox, matchedLayerIds } : null);
+    setRoiFilter(bbox !== null ? { bbox, matchedLayerIds, adminKeywords: adminKeywords ?? [] } : null);
   };
 
   const handleExportGdb = async () => {
     if (activeLayers.length === 0 || isExporting) return;
     setIsExporting(true);
     try {
+      // Exclude admin layers (bbox-loaded, no static file)
+      const exportLayers = activeLayers.filter(l => !l.id.startsWith('__admin__/'));
+      if (exportLayers.length === 0) {
+        alert('Aucune couche exportable sélectionnée (les couches administratives sont exclues).');
+        setIsExporting(false);
+        return;
+      }
       // 1. Charger les données GeoJSON de chaque couche active
-      const layerDataPromises = activeLayers.map(async (layer) => {
+      const layerDataPromises = exportLayers.map(async (layer) => {
         const res = await fetch(`/api/layers/data?path=${encodeURIComponent(layer.id)}`);
         if (!res.ok) throw new Error(`Erreur chargement couche ${layer.id}`);
         const geojson = await res.json();
@@ -457,7 +534,8 @@ export default function ChatInterface() {
                 </>
               ) : (() => {
                 const groups = [...new Set(roiFilter.matchedLayerIds.map(extractGroupName))];
-                const keywords = roiFilter.matchedLayerIds.map(extractSubLayerKeyword);
+                const layerKeywords = roiFilter.matchedLayerIds.map(extractSubLayerKeyword);
+                const allKeywords = [...layerKeywords, ...roiFilter.adminKeywords];
                 return (
                   <>
                     <Map className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
@@ -466,9 +544,9 @@ export default function ChatInterface() {
                         <strong>Filtre spatial actif</strong> — Document{groups.length > 1 ? 's' : ''} :{' '}
                         {groups.join(', ')}
                       </span>
-                      {keywords.length > 0 && (
+                      {allKeywords.length > 0 && (
                         <span className="italic text-emerald-600">
-                          Mots-clés suggérés : {keywords.join(', ')}
+                          Mots-clés suggérés : {allKeywords.join(', ')}
                         </span>
                       )}
                     </div>
@@ -654,20 +732,26 @@ export default function ChatInterface() {
               layers={layers}
               activeLayerIds={activeLayers.map(l => l.id)}
               layerColors={layerColors}
+              layerOpacities={layerOpacities}
               onToggleLayer={handleToggleLayer}
               onToggleGroup={handleToggleGroup}
               onColorChange={handleColorChange}
+              onOpacityChange={handleOpacityChange}
               activeWmsLayers={activeWmsLayers}
               onRemoveWmsLayer={handleRemoveWmsLayer}
               onExport={handleExportGdb}
               isExporting={isExporting}
+              adminGroup={ADMIN_LAYERS}
+              onToggleAdminLayer={handleToggleAdminLayer}
             />
             <MapComponent
               activeLayers={activeLayers}
               layerColors={layerColors}
+              layerOpacities={layerOpacities}
               activeWmsLayers={activeWmsLayers}
               onAddWmsLayers={handleAddWmsLayers}
               onRoiChange={handleRoiChange}
+              onInitialOpacity={handleInitialOpacity}
             />
           </div>
         )}

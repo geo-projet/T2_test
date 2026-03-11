@@ -12,15 +12,18 @@ import ImageTile from 'ol/ImageTile';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
 import GeoJSON from 'ol/format/GeoJSON';
+import { bbox as bboxStrategy } from 'ol/loadingstrategy';
 import { defaults as defaultControls } from 'ol/control';
 import { Style, Stroke, Fill, Circle as CircleStyle } from 'ol/style';
 import { Select, Draw } from 'ol/interaction';
 import { createBox } from 'ol/interaction/Draw';
 import type { DrawEvent } from 'ol/interaction/Draw';
 import { intersects as extentIntersects } from 'ol/extent';
+import type { FeatureLike } from 'ol/Feature';
 import { click } from 'ol/events/condition';
 import ToolButton from './ToolButton';
 import WMSDialog from './WMSDialog';
+import PrintDialog from './PrintDialog';
 
 // Constants
 const MAP_DEFAULTS = {
@@ -44,6 +47,7 @@ interface ActiveLayer {
   id: string; // groupName/fileName
   groupName: string;
   fileName: string;
+  url?: string; // Custom URL (e.g. static file in /public)
 }
 
 interface ActiveWmsLayer {
@@ -56,34 +60,51 @@ interface ActiveWmsLayer {
 interface MapComponentProps {
   activeLayers: ActiveLayer[];
   layerColors: Record<string, string>;
+  layerOpacities: Record<string, number>;
   activeWmsLayers: ActiveWmsLayer[];
   onAddWmsLayers: (layers: ActiveWmsLayer[]) => void;
-  onRoiChange?: (bbox: [number, number, number, number] | null, matchedLayerIds: string[]) => void;
+  onRoiChange?: (bbox: [number, number, number, number] | null, matchedLayerIds: string[], adminKeywords?: string[]) => void;
+  onInitialOpacity?: (layerId: string, opacity: number) => void;
 }
 
 type ToolMode = 'navigate' | 'select' | 'draw';
 
-// Helper function to create layer style from color
-const createLayerStyle = (color: string) => {
-  const fillColor = `${color}1A`; // Add alpha channel for transparency (10% opacity)
+// Helper function to create layer style from color and opacity
+// Polygones : stroke opaque, fill transparent | Lignes : tout transparent | Points : tout transparent
+/** Check if a layer is an admin layer (loaded via bbox strategy) */
+const isAdminLayer = (layerInfo: ActiveLayer): boolean =>
+  layerInfo.id.startsWith('__admin__/');
 
-  return new Style({
-    stroke: new Stroke({
-      color: color,
-      width: 2,
-    }),
-    fill: new Fill({
-      color: fillColor,
-    }),
+const createLayerStyle = (color: string, opacity: number = 0.1) => {
+  const alpha = Math.round(opacity * 255).toString(16).padStart(2, '0');
+  const colorWithAlpha = `${color}${alpha}`;
+
+  const polygonStyle = new Style({
+    stroke: new Stroke({ color: color, width: 2 }),
+    fill: new Fill({ color: colorWithAlpha }),
+  });
+
+  const lineStyle = new Style({
+    stroke: new Stroke({ color: colorWithAlpha, width: 2 }),
+  });
+
+  const pointStyle = new Style({
     image: new CircleStyle({
       radius: 5,
-      fill: new Fill({ color: color }),
-      stroke: new Stroke({ color: 'white', width: 1 }),
-    })
+      fill: new Fill({ color: colorWithAlpha }),
+      stroke: new Stroke({ color: colorWithAlpha, width: 1 }),
+    }),
   });
+
+  return (feature: FeatureLike) => {
+    const geomType = feature.getGeometry()?.getType();
+    if (geomType === 'Point' || geomType === 'MultiPoint') return pointStyle;
+    if (geomType === 'LineString' || geomType === 'MultiLineString') return lineStyle;
+    return polygonStyle;
+  };
 };
 
-const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, activeWmsLayers, onAddWmsLayers, onRoiChange }) => {
+const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, layerOpacities, activeWmsLayers, onAddWmsLayers, onRoiChange, onInitialOpacity }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<OlMap | null>(null);
   const vectorLayersRef = useRef<Map<string, VectorLayer<VectorSource>>>(new Map());
@@ -96,13 +117,14 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
   const [toolMode, setToolMode] = useState<ToolMode>('navigate');
   const [selectedFeatureInfo, setSelectedFeatureInfo] = useState<Record<string, unknown> | null>(null);
   const [wmsDialogOpen, setWmsDialogOpen] = useState(false);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
 
   // Initialize Map
   useEffect(() => {
     if (!mapRef.current) return;
 
     const osmLayer = new TileLayer({
-      source: new OSM(),
+      source: new OSM({ crossOrigin: 'anonymous' }),
       properties: { name: 'osm' },
       visible: true,
     });
@@ -111,6 +133,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       source: new XYZ({
         url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
         maxZoom: 20,
+        crossOrigin: 'anonymous',
       }),
       properties: { name: 'satellite' },
       visible: false,
@@ -120,6 +143,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       source: new XYZ({
         url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
         maxZoom: 20,
+        crossOrigin: 'anonymous',
       }),
       properties: { name: 'hybrid' },
       visible: false,
@@ -129,6 +153,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       source: new XYZ({
         url: 'https://{a-c}.tile.opentopomap.org/{z}/{x}/{y}.png',
         maxZoom: 17,
+        crossOrigin: 'anonymous',
       }),
       properties: { name: 'topo' },
       visible: false,
@@ -138,6 +163,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       source: new XYZ({
         url: 'https://{a-d}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
         maxZoom: 20,
+        crossOrigin: 'anonymous',
       }),
       properties: { name: 'positron' },
       visible: false,
@@ -147,6 +173,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       source: new XYZ({
         url: 'https://{a-d}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
         maxZoom: 20,
+        crossOrigin: 'anonymous',
       }),
       properties: { name: 'dark' },
       visible: false,
@@ -156,6 +183,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       source: new XYZ({
         url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         maxZoom: 19,
+        crossOrigin: 'anonymous',
       }),
       properties: { name: 'esri' },
       visible: false,
@@ -247,6 +275,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
 
         const matched: string[] = [];
         vectorLayersRef.current.forEach((layer, layerId) => {
+          if (layerId.startsWith('__admin__/')) return; // Exclude admin layers
           const source = layer.getSource();
           if (!source) return;
           const layerExtent = source.getExtent();
@@ -258,7 +287,23 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
           }
         });
 
-        onRoiChange?.(drawnExtent as [number, number, number, number], matched);
+        // Fetch municipality attributes independently (works even if layer not displayed)
+        const bboxStr = drawnExtent.join(',');
+        fetch(`/api/layers/admin-bbox?file=municipalite.geojson&bbox=${bboxStr}`)
+          .then(r => r.json())
+          .then((fc: { features: { properties: Record<string, string> }[] }) => {
+            const keywords = new Set<string>();
+            for (const f of fc.features) {
+              const p = f.properties;
+              if (p.MUS_NM_MUN) keywords.add(p.MUS_NM_MUN);
+              if (p.MUS_NM_MRC) keywords.add(p.MUS_NM_MRC);
+              if (p.MUS_NM_REG) keywords.add(p.MUS_NM_REG);
+            }
+            onRoiChange?.(drawnExtent as [number, number, number, number], matched, [...keywords]);
+          })
+          .catch(() => {
+            onRoiChange?.(drawnExtent as [number, number, number, number], matched, []);
+          });
       });
 
       map.addInteraction(drawInteraction);
@@ -294,16 +339,33 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
 
     activeLayers.forEach(layerInfo => {
       if (!vectorLayersRef.current.has(layerInfo.id)) {
-        const source = new VectorSource({
-          url: `/api/layers/data?path=${encodeURIComponent(layerInfo.id)}`,
-          format: new GeoJSON(),
-        });
+        const isAdmin = isAdminLayer(layerInfo);
+
+        let source: VectorSource;
+        if (isAdmin) {
+          // Admin layers: bbox loading strategy — only fetch visible features
+          const adminFile = layerInfo.fileName;
+          source = new VectorSource({
+            format: new GeoJSON(),
+            strategy: bboxStrategy,
+            url: (extent) =>
+              `/api/layers/admin-bbox?file=${encodeURIComponent(adminFile)}&bbox=${extent.join(',')}`,
+          });
+        } else {
+          const sourceUrl = layerInfo.url
+            ?? `/api/layers/data?path=${encodeURIComponent(layerInfo.id)}`;
+          source = new VectorSource({
+            url: sourceUrl,
+            format: new GeoJSON(),
+          });
+        }
 
         const layerColor = layerColors[layerInfo.id] || COLORS.PRIMARY;
+        const layerOpacity = layerOpacities[layerInfo.id] ?? 0.5;
 
         const vectorLayer = new VectorLayer({
           source: source,
-          style: createLayerStyle(layerColor)
+          style: createLayerStyle(layerColor, layerOpacity)
         });
 
         currentMap.addLayer(vectorLayer);
@@ -312,12 +374,27 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
         source.on('change', () => {
           const state = source.getState();
           if (state === 'ready') {
-            const extent = source.getExtent();
-            if (extent && !extent.includes(Infinity) && !extent.includes(-Infinity)) {
-              currentMap.getView().fit(extent, {
-                padding: MAP_DEFAULTS.FIT_PADDING,
-                maxZoom: MAP_DEFAULTS.MAX_ZOOM
-              });
+            // Skip auto-zoom for admin layers (too large, loaded progressively)
+            if (!isAdmin) {
+              const extent = source.getExtent();
+              if (extent && !extent.includes(Infinity) && !extent.includes(-Infinity)) {
+                currentMap.getView().fit(extent, {
+                  padding: MAP_DEFAULTS.FIT_PADDING,
+                  maxZoom: MAP_DEFAULTS.MAX_ZOOM
+                });
+              }
+            }
+            // Detect geometry type and set initial opacity
+            if (layerOpacities[layerInfo.id] === undefined) {
+              const firstFeature = source.getFeatures()[0];
+              const geomType = firstFeature?.getGeometry()?.getType();
+              const detectedOpacity =
+                geomType === 'Point' || geomType === 'MultiPoint' ||
+                geomType === 'LineString' || geomType === 'MultiLineString'
+                  ? 1.0
+                  : 0.5;
+              vectorLayer.setStyle(createLayerStyle(layerColor, detectedOpacity));
+              onInitialOpacity?.(layerInfo.id, detectedOpacity);
             }
           } else if (state === 'error') {
             console.error(`Erreur de chargement de la couche: ${layerInfo.fileName}`);
@@ -325,15 +402,16 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
         });
       }
     });
-  }, [activeLayers, layerColors]);
+  }, [activeLayers, layerColors, layerOpacities]);
 
-  // Update layer styles when colors change
+  // Update layer styles when colors or opacities change
   useEffect(() => {
     vectorLayersRef.current.forEach((layer, layerId) => {
       const newColor = layerColors[layerId] || COLORS.PRIMARY;
-      layer.setStyle(createLayerStyle(newColor));
+      const opacity = layerOpacities[layerId] ?? 0.5;
+      layer.setStyle(createLayerStyle(newColor, opacity));
     });
-  }, [layerColors]);
+  }, [layerColors, layerOpacities]);
 
   // Handle WMS Layers
   useEffect(() => {
@@ -371,7 +449,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
 
   const clearDrawings = () => {
     drawSourceRef.current.clear();
-    onRoiChange?.(null, []);
+    onRoiChange?.(null, [], []);
   };
 
   return (
@@ -442,6 +520,19 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
           </svg>
         </button>
+
+        {/* Print / Export Tool */}
+        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <button
+          onClick={() => setPrintDialogOpen(true)}
+          className="p-2 rounded transition-colors hover:bg-gray-100 text-gray-600"
+          title="Exporter / Imprimer la carte"
+          aria-label="Ouvrir l'outil d'export et d'impression de la carte"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18.75 7.131A2.026 2.026 0 0 0 18 7.087V3.375" />
+          </svg>
+        </button>
       </div>
 
       {/* Attribute Panel */}
@@ -471,6 +562,16 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
         open={wmsDialogOpen}
         onClose={() => setWmsDialogOpen(false)}
         onAdd={(layers) => { onAddWmsLayers(layers); setWmsDialogOpen(false); }}
+      />
+
+      {/* Print Dialog */}
+      <PrintDialog
+        open={printDialogOpen}
+        onClose={() => setPrintDialogOpen(false)}
+        map={mapInstance.current}
+        activeLayers={activeLayers}
+        layerColors={layerColors}
+        activeWmsLayers={activeWmsLayers}
       />
 
       {/* Base Layer Switcher */}

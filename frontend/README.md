@@ -43,14 +43,19 @@ frontend/
 │   ├── layout.tsx        # Layout global
 │   ├── globals.css
 │   └── api/
-│       └── layers/
-│           ├── route.ts        # GET /api/layers — liste des groupes et couches GeoJSON
-│           └── data/route.ts   # GET /api/layers/data?path=... — contenu d'une couche
+│       ├── layers/
+│       │   ├── route.ts              # GET /api/layers — liste des groupes et couches GeoJSON
+│       │   ├── data/route.ts         # GET /api/layers/data?path=... — contenu d'une couche
+│       │   └── admin-bbox/route.ts   # GET /api/layers/admin-bbox?file=...&bbox=... — features admin par bbox
+│       ├── wms-proxy/route.ts        # Proxy CORS pour GetCapabilities WMS
+│       └── wms-tiles/route.ts        # Proxy CORS pour tuiles WMS (image/png)
 ├── components/
 │   ├── LoginPage.tsx     # Page de connexion (POST /login backend)
 │   ├── PDFViewer.tsx     # Visionneuse PDF avec Authorization header
 │   ├── MapComponent.tsx  # Carte OpenLayers (7 fonds de carte, couches GeoJSON/WMS, outils)
 │   ├── MapSidebar.tsx    # Panneau de gestion des couches (groupes, checkboxes, couleurs)
+│   ├── WMSDialog.tsx     # Modal ajout service WMS (GetCapabilities + sélection)
+│   ├── PrintDialog.tsx   # Modal export/impression de la carte
 │   ├── ToolButton.tsx    # Bouton d'outil carte réutilisable
 │   └── ui/               # Composants shadcn/ui (Button, Input, Card, etc.)
 └── lib/

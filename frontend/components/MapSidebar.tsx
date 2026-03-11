@@ -14,17 +14,26 @@ interface ActiveWmsLayer {
   title: string;
 }
 
+interface AdminGroup {
+  groupName: string;
+  layers: { id: string; fileName: string; url: string }[];
+}
+
 interface MapSidebarProps {
   layers: LayerGroup[];
   activeLayerIds: string[];
   layerColors: Record<string, string>;
+  layerOpacities: Record<string, number>;
   onToggleLayer: (groupName: string, fileName: string) => void;
   onToggleGroup: (groupName: string) => void;
   onColorChange: (layerId: string, color: string) => void;
+  onOpacityChange: (layerId: string, opacity: number) => void;
   activeWmsLayers?: ActiveWmsLayer[];
   onRemoveWmsLayer?: (id: string) => void;
   onExport?: () => void;
   isExporting?: boolean;
+  adminGroup?: AdminGroup;
+  onToggleAdminLayer?: (layerId: string, fileName: string, url: string) => void;
 }
 
 interface GroupCheckboxProps {
@@ -56,8 +65,26 @@ const GroupCheckbox: React.FC<GroupCheckboxProps> = ({ checked, indeterminate, o
   );
 };
 
-const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerColors, onToggleLayer, onToggleGroup, onColorChange, activeWmsLayers, onRemoveWmsLayer, onExport, isExporting }) => {
+const normalize = (str: string) =>
+  str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerColors, layerOpacities, onToggleLayer, onToggleGroup, onColorChange, onOpacityChange, activeWmsLayers, onRemoveWmsLayer, onExport, isExporting, adminGroup, onToggleAdminLayer }) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
+  const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Close popover on outside click
+  useEffect(() => {
+    if (!colorPickerOpen) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setColorPickerOpen(null);
+      }
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [colorPickerOpen]);
 
   const toggleGroupExpand = (groupName: string) => {
     const newExpanded = new Set(expandedGroups);
@@ -89,6 +116,33 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
         <p className="text-xs text-gray-500 mt-0.5">Explorateur GeoJSON</p>
       </div>
 
+      {/* Champ de recherche */}
+      <div className="px-3 pt-2 pb-1">
+        <div className="relative">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+          </svg>
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Rechercher une couche…"
+            className="w-full pl-8 pr-8 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              aria-label="Effacer la recherche"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-2">
         {layers.length === 0 ? (
           <div className="text-center p-4 text-gray-400 text-sm">
@@ -96,7 +150,30 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
           </div>
         ) : (
           <div className="space-y-2">
-            {layers.map((group) => {
+            {(() => {
+              const needle = normalize(searchTerm.trim());
+              const filteredLayers = !needle
+                ? layers
+                : layers
+                    .map((group) => {
+                      if (normalize(group.groupName).includes(needle)) return group;
+                      const matchedFiles = group.files.filter((f) =>
+                        normalize(f.replace('.geojson', '').replace('.json', '')).includes(needle)
+                      );
+                      if (matchedFiles.length === 0) return null;
+                      return { ...group, files: matchedFiles };
+                    })
+                    .filter((g): g is LayerGroup => g !== null);
+
+              if (filteredLayers.length === 0) {
+                return (
+                  <div className="text-center p-4 text-gray-400 text-sm">
+                    Aucune couche trouvée pour « {searchTerm.trim()} ».
+                  </div>
+                );
+              }
+
+              return filteredLayers.map((group) => {
               const checkState = getGroupCheckState(group);
 
               return (
@@ -110,10 +187,10 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
                     />
                     <button
                       onClick={() => toggleGroupExpand(group.groupName)}
-                      className="flex-1 flex items-center justify-between text-left"
+                      className="flex-1 flex items-center justify-between text-left min-w-0"
                     >
-                      <span className="font-semibold text-gray-700 text-sm">{group.groupName}</span>
-                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                      <span className="font-semibold text-gray-700 text-sm truncate">{group.groupName}</span>
+                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full flex-shrink-0">
                         {group.files.length}
                       </span>
                     </button>
@@ -126,15 +203,18 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
                         const checked = isActive(group.groupName, file);
                         const currentColor = layerColors[id] || '#3b82f6';
 
+                        const currentOpacity = layerOpacities[id] ?? 0.5;
+                        const opacityPct = Math.round(currentOpacity * 100);
+
                         return (
                           <div
                             key={id}
                             className={`flex items-center gap-2 p-2 rounded transition-colors text-sm ${checked ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                           >
-                            <label className="flex items-center gap-3 flex-1 cursor-pointer">
+                            <label className="flex items-center gap-3 flex-1 cursor-pointer min-w-0">
                               <input
                                 type="checkbox"
-                                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 flex-shrink-0"
                                 checked={checked}
                                 onChange={() => onToggleLayer(group.groupName, file)}
                               />
@@ -143,14 +223,46 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
                               </span>
                             </label>
                             {checked && (
-                              <input
-                                type="color"
-                                value={currentColor}
-                                onChange={(e) => onColorChange(id, e.target.value)}
-                                className="w-7 h-7 rounded border border-gray-300 cursor-pointer flex-shrink-0"
-                                title="Choisir une couleur"
-                                aria-label={`Couleur de ${file}`}
-                              />
+                              <div className="relative flex-shrink-0">
+                                <button
+                                  onClick={() => setColorPickerOpen(colorPickerOpen === id ? null : id)}
+                                  className="w-6 h-6 rounded border border-gray-300 cursor-pointer flex-shrink-0"
+                                  style={{
+                                    backgroundColor: `${currentColor}${Math.round(currentOpacity * 255).toString(16).padStart(2, '0')}`,
+                                  }}
+                                  title={`Couleur & opacité (${opacityPct}%)`}
+                                  aria-label={`Couleur et opacité de ${file}`}
+                                />
+                                {colorPickerOpen === id && (
+                                  <div
+                                    ref={popoverRef}
+                                    className="absolute right-0 top-8 z-30 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-48"
+                                  >
+                                    <input
+                                      type="color"
+                                      value={currentColor}
+                                      onChange={(e) => onColorChange(id, e.target.value)}
+                                      className="w-full h-8 rounded border border-gray-300 cursor-pointer"
+                                      title="Choisir une couleur"
+                                      aria-label={`Couleur de ${file}`}
+                                    />
+                                    <div className="flex items-center gap-2 mt-2">
+                                      <span className="text-xs text-gray-500 whitespace-nowrap">Opacité</span>
+                                      <input
+                                        type="range"
+                                        min={0}
+                                        max={100}
+                                        step={5}
+                                        value={opacityPct}
+                                        onChange={(e) => onOpacityChange(id, Number(e.target.value) / 100)}
+                                        className="flex-1 h-1.5 accent-blue-600 cursor-pointer"
+                                        aria-label={`Opacité de ${file}`}
+                                      />
+                                      <span className="text-xs text-gray-600 font-medium w-8 text-right">{opacityPct}%</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                         );
@@ -159,9 +271,87 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
                   )}
                 </div>
               );
-            })}
+            });
+            })()}
           </div>
         )}
+        {/* Section Administrative */}
+        {adminGroup && adminGroup.layers.length > 0 && (
+          <div className="border-t border-gray-200 mt-3 pt-3">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider px-1 mb-2">{adminGroup.groupName}</p>
+            <div className="space-y-1">
+              {adminGroup.layers.map((layer) => {
+                const checked = activeLayerIds.includes(layer.id);
+                const currentColor = layerColors[layer.id] || '#6b7280';
+                const currentOpacity = layerOpacities[layer.id] ?? 0.5;
+                const opacityPct = Math.round(currentOpacity * 100);
+                const displayName = layer.fileName.replace('.geojson', '').replace('.json', '');
+
+                return (
+                  <div
+                    key={layer.id}
+                    className={`flex items-center gap-2 p-2 rounded transition-colors text-sm ${checked ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
+                  >
+                    <label className="flex items-center gap-3 flex-1 cursor-pointer min-w-0">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 flex-shrink-0"
+                        checked={checked}
+                        onChange={() => onToggleAdminLayer?.(layer.id, layer.fileName, layer.url)}
+                      />
+                      <span className={`truncate ${checked ? 'text-gray-700 font-medium' : 'text-gray-600'}`}>
+                        {displayName}
+                      </span>
+                    </label>
+                    {checked && (
+                      <div className="relative flex-shrink-0">
+                        <button
+                          onClick={() => setColorPickerOpen(colorPickerOpen === layer.id ? null : layer.id)}
+                          className="w-6 h-6 rounded border border-gray-300 cursor-pointer flex-shrink-0"
+                          style={{
+                            backgroundColor: `${currentColor}${Math.round(currentOpacity * 255).toString(16).padStart(2, '0')}`,
+                          }}
+                          title={`Couleur & opacité (${opacityPct}%)`}
+                          aria-label={`Couleur et opacité de ${displayName}`}
+                        />
+                        {colorPickerOpen === layer.id && (
+                          <div
+                            ref={popoverRef}
+                            className="absolute right-0 top-8 z-30 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-48"
+                          >
+                            <input
+                              type="color"
+                              value={currentColor}
+                              onChange={(e) => onColorChange(layer.id, e.target.value)}
+                              className="w-full h-8 rounded border border-gray-300 cursor-pointer"
+                              title="Choisir une couleur"
+                              aria-label={`Couleur de ${displayName}`}
+                            />
+                            <div className="flex items-center gap-2 mt-2">
+                              <span className="text-xs text-gray-500 whitespace-nowrap">Opacité</span>
+                              <input
+                                type="range"
+                                min={0}
+                                max={100}
+                                step={5}
+                                value={opacityPct}
+                                onChange={(e) => onOpacityChange(layer.id, Number(e.target.value) / 100)}
+                                className="flex-1 h-1.5 accent-blue-600 cursor-pointer"
+                                aria-label={`Opacité de ${displayName}`}
+                              />
+                              <span className="text-xs text-gray-600 font-medium w-8 text-right">{opacityPct}%</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Section Services WMS */}
         {activeWmsLayers && activeWmsLayers.length > 0 && (
           <div className="border-t border-gray-200 mt-3 pt-3">

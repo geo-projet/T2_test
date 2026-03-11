@@ -2,6 +2,10 @@
 backend/data/
 backend/chroma_db/
 
+# Large static admin data
+frontend/public/municipalite.geojson
+frontend/public/municipalite.qmd
+
 # Python
 __pycache__/
 *.pyc
