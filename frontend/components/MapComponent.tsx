@@ -91,7 +91,8 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
   const drawSourceRef = useRef<VectorSource>(new VectorSource());
 
   // State
-  const [baseLayer, setBaseLayer] = useState<'osm' | 'satellite'>('osm');
+  type BasemapKey = 'osm' | 'satellite' | 'hybrid' | 'topo' | 'positron' | 'dark' | 'esri';
+  const [baseLayer, setBaseLayer] = useState<BasemapKey>('osm');
   const [toolMode, setToolMode] = useState<ToolMode>('navigate');
   const [selectedFeatureInfo, setSelectedFeatureInfo] = useState<Record<string, unknown> | null>(null);
   const [wmsDialogOpen, setWmsDialogOpen] = useState(false);
@@ -115,6 +116,51 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       visible: false,
     });
 
+    const hybridLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        maxZoom: 20,
+      }),
+      properties: { name: 'hybrid' },
+      visible: false,
+    });
+
+    const topoLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://{a-c}.tile.opentopomap.org/{z}/{x}/{y}.png',
+        maxZoom: 17,
+      }),
+      properties: { name: 'topo' },
+      visible: false,
+    });
+
+    const positronLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://{a-d}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+        maxZoom: 20,
+      }),
+      properties: { name: 'positron' },
+      visible: false,
+    });
+
+    const darkLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://{a-d}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+        maxZoom: 20,
+      }),
+      properties: { name: 'dark' },
+      visible: false,
+    });
+
+    const esriLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        maxZoom: 19,
+      }),
+      properties: { name: 'esri' },
+      visible: false,
+    });
+
     // Layer for drawn items (ROI)
     const drawLayer = new VectorLayer({
       source: drawSourceRef.current,
@@ -127,7 +173,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
 
     const map = new OlMap({
       target: mapRef.current,
-      layers: [osmLayer, satelliteLayer, drawLayer],
+      layers: [osmLayer, satelliteLayer, hybridLayer, topoLayer, positronLayer, darkLayer, esriLayer, drawLayer],
       view: new View({
         projection: 'EPSG:4326',
         center: MAP_DEFAULTS.INITIAL_CENTER,
@@ -224,12 +270,11 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
   // Handle Base Layer Switch
   useEffect(() => {
     if (!mapInstance.current) return;
-    const layers = mapInstance.current.getLayers().getArray();
-    layers.forEach(layer => {
-      if (layer.get('name') === 'osm') {
-        layer.setVisible(baseLayer === 'osm');
-      } else if (layer.get('name') === 'satellite') {
-        layer.setVisible(baseLayer === 'satellite');
+    const basemapNames: BasemapKey[] = ['osm', 'satellite', 'hybrid', 'topo', 'positron', 'dark', 'esri'];
+    mapInstance.current.getLayers().getArray().forEach(layer => {
+      const name = layer.get('name');
+      if (basemapNames.includes(name)) {
+        layer.setVisible(name === baseLayer);
       }
     });
   }, [baseLayer]);
@@ -429,29 +474,21 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       />
 
       {/* Base Layer Switcher */}
-      <div className="absolute top-4 right-4 bg-white p-2 rounded shadow-md z-10 flex flex-col gap-2" role="radiogroup" aria-label="Sélection de la carte de base">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="radio"
-            name="basemap"
-            value="osm"
-            checked={baseLayer === 'osm'}
-            onChange={() => setBaseLayer('osm')}
-            aria-label="Carte OpenStreetMap"
-          />
-          <span className="text-sm font-medium">OSM</span>
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="radio"
-            name="basemap"
-            value="satellite"
-            checked={baseLayer === 'satellite'}
-            onChange={() => setBaseLayer('satellite')}
-            aria-label="Carte satellite"
-          />
-          <span className="text-sm font-medium">Satellite</span>
-        </label>
+      <div className="absolute top-4 right-4 bg-white p-2 rounded shadow-md z-10">
+        <select
+          value={baseLayer}
+          onChange={e => setBaseLayer(e.target.value as BasemapKey)}
+          className="text-sm font-medium border rounded px-2 py-1"
+          aria-label="Sélection du fond de carte"
+        >
+          <option value="osm">OpenStreetMap</option>
+          <option value="satellite">Satellite</option>
+          <option value="hybrid">Satellite hybride</option>
+          <option value="topo">Topographique</option>
+          <option value="positron">Clair (Positron)</option>
+          <option value="dark">Sombre</option>
+          <option value="esri">Esri Imagerie</option>
+        </select>
       </div>
     </div>
   );

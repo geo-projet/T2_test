@@ -49,7 +49,7 @@ frontend/
 ├── components/
 │   ├── LoginPage.tsx     # Page de connexion (POST /login backend)
 │   ├── PDFViewer.tsx     # Visionneuse PDF avec Authorization header
-│   ├── MapComponent.tsx  # Carte OpenLayers (fonds OSM/Satellite, couches GeoJSON, outils)
+│   ├── MapComponent.tsx  # Carte OpenLayers (7 fonds de carte, couches GeoJSON/WMS, outils)
 │   ├── MapSidebar.tsx    # Panneau de gestion des couches (groupes, checkboxes, couleurs)
 │   ├── ToolButton.tsx    # Bouton d'outil carte réutilisable
 │   └── ui/               # Composants shadcn/ui (Button, Input, Card, etc.)
