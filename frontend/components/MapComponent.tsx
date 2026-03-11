@@ -19,7 +19,9 @@ import { Select, Draw } from 'ol/interaction';
 import { createBox } from 'ol/interaction/Draw';
 import type { DrawEvent } from 'ol/interaction/Draw';
 import { intersects as extentIntersects } from 'ol/extent';
+import Feature from 'ol/Feature';
 import type { FeatureLike } from 'ol/Feature';
+import type { MapBrowserEvent } from 'ol';
 import { click } from 'ol/events/condition';
 import ToolButton from './ToolButton';
 import WMSDialog from './WMSDialog';
@@ -41,6 +43,8 @@ const COLORS = {
   DRAW_FILL: 'rgba(255, 255, 255, 0.2)',
   SELECT_STROKE: 'rgba(255, 0, 0, 0.7)',
   SELECT_FILL: 'rgba(255, 0, 0, 0.1)',
+  HOVER_STROKE: 'rgba(255, 165, 0, 0.8)',
+  HOVER_FILL: 'rgba(255, 165, 0, 0.15)',
 } as const;
 
 interface ActiveLayer {
@@ -110,6 +114,9 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
   const vectorLayersRef = useRef<Map<string, VectorLayer<VectorSource>>>(new Map());
   const wmsLayerRefsRef = useRef<Map<string, TileLayer<TileWMS>>>(new Map());
   const drawSourceRef = useRef<VectorSource>(new VectorSource());
+  const hoveredFeatureRef = useRef<Feature | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pointerMoveRef = useRef<((evt: MapBrowserEvent<any>) => void) | null>(null);
 
   // State
   type BasemapKey = 'osm' | 'satellite' | 'hybrid' | 'topo' | 'positron' | 'dark' | 'esri';
@@ -235,6 +242,18 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       }
     });
 
+    // Cleanup previous hover state
+    if (pointerMoveRef.current) {
+      map.un('pointermove', pointerMoveRef.current);
+      pointerMoveRef.current = null;
+    }
+    if (hoveredFeatureRef.current) {
+      hoveredFeatureRef.current.setStyle(undefined);
+      hoveredFeatureRef.current = null;
+    }
+    const target = map.getTargetElement();
+    if (target) target.style.cursor = '';
+
     if (toolMode === 'select') {
       const selectInteraction = new Select({
         condition: click,
@@ -261,6 +280,56 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       });
 
       map.addInteraction(selectInteraction);
+
+      // --- Hover highlight ---
+      const hoverStyle = new Style({
+        stroke: new Stroke({ color: COLORS.HOVER_STROKE, width: 3 }),
+        fill: new Fill({ color: COLORS.HOVER_FILL }),
+        image: new CircleStyle({
+          radius: 7,
+          fill: new Fill({ color: COLORS.HOVER_FILL }),
+          stroke: new Stroke({ color: COLORS.HOVER_STROKE, width: 2 }),
+        }),
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const handlePointerMove = (evt: MapBrowserEvent<any>) => {
+        if (evt.dragging) return;
+        const pixel = evt.pixel;
+        const hit = map.forEachFeatureAtPixel(pixel, (f) => f as Feature);
+        const selectedFeatures = selectInteraction.getFeatures().getArray();
+
+        // Skip if same feature
+        if (hit === hoveredFeatureRef.current) {
+          if (!hit) {
+            const el = map.getTargetElement();
+            if (el) el.style.cursor = '';
+          }
+          return;
+        }
+
+        // Reset previous hover (only if not selected)
+        if (hoveredFeatureRef.current && !selectedFeatures.includes(hoveredFeatureRef.current)) {
+          hoveredFeatureRef.current.setStyle(undefined);
+        }
+        hoveredFeatureRef.current = null;
+
+        // Apply hover to new feature
+        if (hit) {
+          if (!selectedFeatures.includes(hit as Feature)) {
+            (hit as Feature).setStyle(hoverStyle);
+          }
+          hoveredFeatureRef.current = hit as Feature;
+          const el = map.getTargetElement();
+          if (el) el.style.cursor = 'pointer';
+        } else {
+          const el = map.getTargetElement();
+          if (el) el.style.cursor = '';
+        }
+      };
+
+      map.on('pointermove', handlePointerMove);
+      pointerMoveRef.current = handlePointerMove;
     } else if (toolMode === 'draw') {
       const drawInteraction = new Draw({
         source: drawSourceRef.current,
@@ -403,6 +472,14 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
       }
     });
   }, [activeLayers, layerColors, layerOpacities]);
+
+  // Sync z-index with activeLayers order (drag & drop reorder)
+  useEffect(() => {
+    activeLayers.forEach((layerInfo, index) => {
+      const olLayer = vectorLayersRef.current.get(layerInfo.id);
+      if (olLayer) olLayer.setZIndex(activeLayers.length - index);
+    });
+  }, [activeLayers]);
 
   // Update layer styles when colors or opacities change
   useEffect(() => {
