@@ -186,7 +186,18 @@ export default function ChatInterface() {
     setActiveLayers(prev => {
       const exists = prev.find(l => l.id === id);
       if (exists) return prev.filter(l => l.id !== id);
-      return [...prev, { id, groupName, fileName }];
+      // Insérer puis trier selon l'ordre original des groupes/fichiers
+      const next = [...prev, { id, groupName, fileName }];
+      next.sort((a, b) => {
+        const gIdxA = layers.findIndex(g => g.groupName === a.groupName);
+        const gIdxB = layers.findIndex(g => g.groupName === b.groupName);
+        if (gIdxA !== gIdxB) return gIdxA - gIdxB;
+        const groupA = layers[gIdxA];
+        const fIdxA = groupA?.files.indexOf(a.fileName) ?? 0;
+        const fIdxB = groupA?.files.indexOf(b.fileName) ?? 0;
+        return fIdxA - fIdxB;
+      });
+      return next;
     });
     // Assigner une couleur automatique si absente
     if (!layerColors[id]) {
@@ -258,6 +269,50 @@ export default function ChatInterface() {
     if (!layerColors[layerId]) {
       setLayerColors(prev => prev[layerId] ? prev : { ...prev, [layerId]: ADMIN_COLOR });
     }
+  };
+
+  const handleReorderLayer = (groupName: string, fromIndex: number, toIndex: number) => {
+    // Reorder files within the group in layers state
+    setLayers(prev => prev.map(group => {
+      if (group.groupName !== groupName) return group;
+      const newFiles = [...group.files];
+      const [moved] = newFiles.splice(fromIndex, 1);
+      newFiles.splice(toIndex, 0, moved);
+      return { ...group, files: newFiles };
+    }));
+
+    // Reorder matching entries in activeLayers to sync z-index
+    setActiveLayers(prev => {
+      const groupEntries = prev.filter(l => l.groupName === groupName);
+      if (groupEntries.length < 2) return prev;
+      const otherEntries = prev.filter(l => l.groupName !== groupName);
+
+      // Get new file order for this group
+      const currentGroup = layers.find(g => g.groupName === groupName);
+      if (!currentGroup) return prev;
+      const newFiles = [...currentGroup.files];
+      const [moved] = newFiles.splice(fromIndex, 1);
+      newFiles.splice(toIndex, 0, moved);
+
+      // Sort group entries by new file order
+      const sorted = [...groupEntries].sort((a, b) => {
+        const aIdx = newFiles.indexOf(a.fileName);
+        const bIdx = newFiles.indexOf(b.fileName);
+        return aIdx - bIdx;
+      });
+
+      // Rebuild: preserve relative position of groups
+      const result: ActiveLayer[] = [];
+      let sortedIdx = 0;
+      for (const entry of prev) {
+        if (entry.groupName === groupName) {
+          result.push(sorted[sortedIdx++]);
+        } else {
+          result.push(entry);
+        }
+      }
+      return result;
+    });
   };
 
   const handleRoiChange = (
@@ -743,6 +798,7 @@ export default function ChatInterface() {
               isExporting={isExporting}
               adminGroup={ADMIN_LAYERS}
               onToggleAdminLayer={handleToggleAdminLayer}
+              onReorderLayer={handleReorderLayer}
             />
             <MapComponent
               activeLayers={activeLayers}

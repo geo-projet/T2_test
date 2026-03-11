@@ -34,6 +34,7 @@ interface MapSidebarProps {
   isExporting?: boolean;
   adminGroup?: AdminGroup;
   onToggleAdminLayer?: (layerId: string, fileName: string, url: string) => void;
+  onReorderLayer?: (groupName: string, fromIndex: number, toIndex: number) => void;
 }
 
 interface GroupCheckboxProps {
@@ -68,11 +69,12 @@ const GroupCheckbox: React.FC<GroupCheckboxProps> = ({ checked, indeterminate, o
 const normalize = (str: string) =>
   str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
-const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerColors, layerOpacities, onToggleLayer, onToggleGroup, onColorChange, onOpacityChange, activeWmsLayers, onRemoveWmsLayer, onExport, isExporting, adminGroup, onToggleAdminLayer }) => {
+const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerColors, layerOpacities, onToggleLayer, onToggleGroup, onColorChange, onOpacityChange, activeWmsLayers, onRemoveWmsLayer, onExport, isExporting, adminGroup, onToggleAdminLayer, onReorderLayer }) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const [dragState, setDragState] = useState<{ groupName: string; fromIndex: number; overIndex: number } | null>(null);
 
   // Close popover on outside click
   useEffect(() => {
@@ -177,7 +179,7 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
               const checkState = getGroupCheckState(group);
 
               return (
-                <div key={group.groupName} className="border border-gray-200 rounded-md overflow-hidden">
+                <div key={group.groupName} className="border border-gray-200 rounded-md">
                   <div className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 transition-colors">
                     <GroupCheckbox
                       checked={checkState.checked}
@@ -198,7 +200,7 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
 
                   {expandedGroups.has(group.groupName) && (
                     <div className="bg-white p-2 space-y-1 border-t border-gray-200">
-                      {group.files.map((file) => {
+                      {group.files.map((file, fileIndex) => {
                         const id = `${group.groupName}/${file}`;
                         const checked = isActive(group.groupName, file);
                         const currentColor = layerColors[id] || '#3b82f6';
@@ -206,11 +208,42 @@ const MapSidebar: React.FC<MapSidebarProps> = ({ layers, activeLayerIds, layerCo
                         const currentOpacity = layerOpacities[id] ?? 0.5;
                         const opacityPct = Math.round(currentOpacity * 100);
 
+                        const isDragging = dragState?.groupName === group.groupName && dragState.fromIndex === fileIndex;
+                        const isOver = dragState?.groupName === group.groupName && dragState.overIndex === fileIndex && dragState.fromIndex !== fileIndex;
+                        const canDrag = !searchTerm.trim();
+
                         return (
                           <div
                             key={id}
-                            className={`flex items-center gap-2 p-2 rounded transition-colors text-sm ${checked ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                            draggable={canDrag}
+                            onDragStart={(e) => {
+                              setDragState({ groupName: group.groupName, fromIndex: fileIndex, overIndex: fileIndex });
+                              e.dataTransfer.effectAllowed = 'move';
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              if (dragState && dragState.groupName === group.groupName) {
+                                setDragState({ ...dragState, overIndex: fileIndex });
+                              }
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              if (dragState && dragState.groupName === group.groupName && dragState.fromIndex !== fileIndex) {
+                                onReorderLayer?.(group.groupName, dragState.fromIndex, fileIndex);
+                              }
+                              setDragState(null);
+                            }}
+                            onDragEnd={() => setDragState(null)}
+                            className={`flex items-center gap-2 p-2 rounded transition-colors text-sm ${checked ? 'bg-blue-50' : 'hover:bg-gray-50'} ${isDragging ? 'opacity-40' : ''} ${isOver ? 'border-t-2 border-blue-400' : ''}`}
                           >
+                            {canDrag && (
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-gray-300 flex-shrink-0 cursor-grab active:cursor-grabbing">
+                                <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+                                <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+                                <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+                              </svg>
+                            )}
                             <label className="flex items-center gap-3 flex-1 cursor-pointer min-w-0">
                               <input
                                 type="checkbox"

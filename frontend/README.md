@@ -53,7 +53,7 @@ frontend/
 │   ├── LoginPage.tsx     # Page de connexion (POST /login backend)
 │   ├── PDFViewer.tsx     # Visionneuse PDF avec Authorization header
 │   ├── MapComponent.tsx  # Carte OpenLayers (7 fonds de carte, couches GeoJSON/WMS, outils)
-│   ├── MapSidebar.tsx    # Panneau de gestion des couches (groupes, checkboxes, couleurs)
+│   ├── MapSidebar.tsx    # Panneau de gestion des couches (groupes, checkboxes, couleurs/opacité)
 │   ├── WMSDialog.tsx     # Modal ajout service WMS (GetCapabilities + sélection)
 │   ├── PrintDialog.tsx   # Modal export/impression de la carte
 │   ├── ToolButton.tsx    # Bouton d'outil carte réutilisable
