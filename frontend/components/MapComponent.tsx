@@ -274,6 +274,15 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
           const properties = feature.getProperties();
           const { geometry, ...attributes } = properties;
           setSelectedFeatureInfo(attributes);
+          // Zoom to selected feature
+          const geom = feature.getGeometry();
+          if (geom) {
+            map.getView().fit(geom.getExtent(), {
+              padding: MAP_DEFAULTS.FIT_PADDING,
+              maxZoom: MAP_DEFAULTS.MAX_ZOOM,
+              duration: 500,
+            });
+          }
         } else {
           setSelectedFeatureInfo(null);
         }
@@ -440,9 +449,11 @@ const MapComponent: React.FC<MapComponentProps> = ({ activeLayers, layerColors, 
         currentMap.addLayer(vectorLayer);
         vectorLayersRef.current.set(layerInfo.id, vectorLayer);
 
+        let hasZoomed = false;
         source.on('change', () => {
           const state = source.getState();
-          if (state === 'ready') {
+          if (state === 'ready' && !hasZoomed) {
+            hasZoomed = true;
             // Skip auto-zoom for admin layers (too large, loaded progressively)
             if (!isAdmin) {
               const extent = source.getExtent();
