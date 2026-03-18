@@ -1,4 +1,5 @@
 import os
+import sys
 import nest_asyncio
 from dotenv import load_dotenv
 from llama_parse import LlamaParse
@@ -85,19 +86,60 @@ def parse_pdf_with_pages(pdf_path, parser):
 
     return enriched_docs
 
-def ingest_documents():
+def ingest_documents(force: bool = False):
     if not check_env_vars():
         return
 
     print(f"🚀 Starting ingestion process...")
     print(f"   - Data Directory: {DATA_DIR}")
     print(f"   - ChromaDB Directory: {CHROMA_DB_DIR}")
+    if force:
+        print("   - Mode: FORCE (réingestion complète)")
 
     # 1. Setup Global Settings
     Settings.embedding = OpenAIEmbedding(model="text-embedding-3-small")
     Settings.llm = OpenAI(model="gpt-4o", temperature=0)
 
-    # 2. Setup LlamaParse for text and tables
+    # 2. Setup Vector Database (Chroma) — avant le parsing pour filtrer
+    print(f"💾 Connecting to ChromaDB...")
+    db = chromadb.PersistentClient(path=CHROMA_DB_DIR)
+
+    if force:
+        # Mode --force : supprimer et recréer la collection
+        try:
+            db.delete_collection("rag_collection")
+            print("   Deleted old collection (--force)")
+        except Exception:
+            pass
+
+    chroma_collection = db.get_or_create_collection("rag_collection")
+
+    # Identifier les fichiers déjà ingérés
+    already_ingested: set[str] = set()
+    if not force:
+        existing_metadata = chroma_collection.get(include=["metadatas"])
+        for meta in existing_metadata["metadatas"]:
+            if "file_name" in meta:
+                already_ingested.add(meta["file_name"])
+        if already_ingested:
+            print(f"   Fichiers déjà indexés : {', '.join(sorted(already_ingested))}")
+
+    # 3. Lister et filtrer les PDFs
+    pdf_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.pdf')]
+
+    if not pdf_files:
+        print("⚠️  No PDF documents found to ingest.")
+        return
+
+    new_pdf_files = [f for f in pdf_files if f not in already_ingested]
+
+    if not new_pdf_files:
+        print("✅ Aucun nouveau document à ingérer. La base est à jour.")
+        return
+
+    print(f"   {len(new_pdf_files)} nouveau(x) fichier(s) à ingérer (sur {len(pdf_files)} total)")
+
+    # 4. Setup LlamaParse for text and tables
     print("📄 Parsing documents with LlamaParse (this may take a moment)...")
     parser = LlamaParse(
         result_type="markdown",
@@ -106,15 +148,9 @@ def ingest_documents():
         num_workers=4
     )
 
-    # 3. Load Documents with page information
+    # 5. Load Documents with page information
     documents = []
-    pdf_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.pdf')]
-
-    if not pdf_files:
-        print("⚠️  No PDF documents found to ingest.")
-        return
-
-    for pdf_file in pdf_files:
+    for pdf_file in new_pdf_files:
         pdf_path = os.path.join(DATA_DIR, pdf_file)
         try:
             pdf_docs = parse_pdf_with_pages(pdf_path, parser)
@@ -129,7 +165,7 @@ def ingest_documents():
 
     print(f"✅ Successfully parsed {len(documents)} document chunks.")
 
-    # 4. Add content type metadata
+    # 6. Add content type metadata
     print("🏷️  Adding content type metadata...")
     for doc in documents:
         # Check if content contains markdown tables
@@ -142,22 +178,10 @@ def ingest_documents():
 
     print(f"📚 Total documents to index: {len(documents)} (text/table chunks)")
 
-    # 5. Setup Vector Database (Chroma)
-    print(f"💾 Connecting to ChromaDB...")
-    db = chromadb.PersistentClient(path=CHROMA_DB_DIR)
-
-    # Delete and recreate collection to avoid duplicates
-    try:
-        db.delete_collection("rag_collection")
-        print("   Deleted old collection")
-    except:
-        pass
-
-    chroma_collection = db.get_or_create_collection("rag_collection")
+    # 7. Indexing (ajoute à la collection existante)
     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-    # 6. Indexing
     print("⚙️  Creating Vector Index (Embedding & Storing)...")
     index = VectorStoreIndex.from_documents(
         documents,
@@ -166,8 +190,9 @@ def ingest_documents():
     )
 
     print("🎉 Ingestion complete! Data is ready for RAG.")
-    print(f"   - Text/Table chunks: {len(documents)}")
-    print(f"   - Total indexed: {len(documents)}")
+    print(f"   - New text/table chunks: {len(documents)}")
+    print(f"   - Already indexed files: {len(already_ingested)}")
 
 if __name__ == "__main__":
-    ingest_documents()
+    force_mode = "--force" in sys.argv
+    ingest_documents(force=force_mode)

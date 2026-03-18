@@ -129,7 +129,11 @@ CHROMA_DB_DIR=./chroma_db
 Déposer les PDF dans `backend/data/`, puis indexer :
 
 ```bash
+# Ingestion incrémentale (ne traite que les nouveaux PDFs)
 python ingest.py
+
+# Réingestion complète (supprime la collection et réindexe tout)
+python ingest.py --force
 ```
 
 Lancer l'API :
@@ -175,7 +179,7 @@ Application disponible sur `http://localhost:3000`.
 ## Utilisation
 
 1. Déposer les PDF techniques dans `backend/data/`
-2. Exécuter `python ingest.py` pour indexer les documents
+2. Exécuter `python ingest.py` pour indexer les nouveaux documents (ou `python ingest.py --force` pour tout réindexer)
 3. Lancer le backend (`fastapi dev main.py`) et le frontend (`npm run dev`)
 4. Ouvrir `http://localhost:3000`, se connecter avec les credentials définis dans `.env`
 5. Choisir le mode de recherche et poser une question
